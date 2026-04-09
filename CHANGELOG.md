@@ -1,3 +1,5 @@
-## 1.0.0
+## 0.0.2+2
+- motion Simulation under development
 
-- Initial version.
+## 0.0.1
+- Warp calculation

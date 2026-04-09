@@ -91,30 +91,21 @@ void main(){
       uranus, 
       neptune,
     ];
-    List<Body> solarSystemBodies2 = [
-      sun, 
-      mercury, 
-      venus, 
-      earth, 
-      //moon, 
-      mars, 
-      jupiter, 
-      saturn, 
-      uranus, 
-      neptune,
-    ];
 
     PotentialEnergy potentialEnergy1 = calculateWarpInASystem(
       bodies: solarSystemBodies, 
       targetBody: earth,
     );
     PotentialEnergy potentialEnergy2 = calculateWarpInASystem(
-      bodies: solarSystemBodies2, 
+      bodies: solarSystemBodies, 
       targetBody: moon,
     );
     BigDec deformationRatio1 = potentialEnergy1.calculateDeformationRatio();
     BigDec deformationRatio2 = potentialEnergy2.calculateDeformationRatio();
     BigDec difference = deformationRatio2.subtract(deformationRatio1);
     print("Time on the moon is x${difference.toString()} faster than the earth.");
+  });
+  test("Calculate the period and direction of the orbit for each body in the solar system", (){
+
   });
 }

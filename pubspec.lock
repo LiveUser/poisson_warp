@@ -37,10 +37,10 @@ packages:
     dependency: "direct main"
     description:
       name: big_dec
-      sha256: "48f12248aa674d94365bc22a774bcf33975d277b3035996e8f1b0f27b11c0fa4"
+      sha256: "38505be13998867d07fe0f3582c8e1b272057d919b7bb637425be2ebb9187f42"
       url: "https://pub.dev"
     source: hosted
-    version: "0.0.8+8"
+    version: "0.0.9+9"
   boolean_selector:
     dependency: transitive
     description:
@@ -185,6 +185,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.0.2"
+  normalizer:
+    dependency: transitive
+    description:
+      name: normalizer
+      sha256: "302b9e612d39382fefc36f567fab3857584e8c3f3976e9a9d6ae9a1a7acb9d9c"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.0.3+4"
   package_config:
     dependency: transitive
     description:
@@ -209,6 +217,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.5.2"
+  power_plant:
+    dependency: "direct main"
+    description:
+      name: power_plant
+      sha256: cdbf5c7cd987950dfecc614902c48ade36daf212f61a7a67b63463b6be229a7b
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.0.2+3"
   pub_semver:
     dependency: transitive
     description:
