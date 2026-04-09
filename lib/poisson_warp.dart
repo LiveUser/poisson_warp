@@ -221,12 +221,13 @@ class KinematicBody {
   KinematicBody({required Body body, required List<Body> influences}) {
     _body = body;
     _influences = influences;
+    calculateMotion();
   }
   late Body _body;
   Body get body => _body;
   late final List<Body> _influences;
-  Motion? _motion;
-  Motion? get motion => _motion;
+  late Motion _motion;
+  Motion get motion => _motion;
 
   void calculateMotion() {
     final zero = BigDec.fromBigInt(BigInt.zero);
@@ -251,5 +252,22 @@ class KinematicBody {
       clockWise: true,
       zAngle: zero,
     );
+  }
+}
+class SolarYear {
+  SolarYear({required this.elapsedYears, this.decimalPlaces = 200});
+  
+  final BigDec elapsedYears;
+  final int decimalPlaces;
+
+  /// Returns the total seconds in the elapsed solar years.
+  /// Calculation based on ~365.2422 days.
+  BigDec inSeconds() {
+    BigInt daySecs = BigInt.from(86400);
+    // 365 days + 20,926 seconds (5 hours, 48 mins, 46 secs)
+    BigInt yearSecs = (daySecs * BigInt.from(365)) + BigInt.from(20926); 
+    
+    BigDec yearValue = BigDec.fromBigInt(yearSecs)..setDecimalPrecision(decimalPlaces);
+    return yearValue.multiply(elapsedYears);
   }
 }

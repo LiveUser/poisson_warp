@@ -79,25 +79,12 @@ void main(){
       position: Vector3(x: BigDec.fromString("4498396441000.0"), y: BigDec.fromBigInt(BigInt.zero), z: BigDec.fromBigInt(BigInt.zero)),
     );
 
-    List<Body> solarSystemBodies = [
-      sun, 
-      mercury, 
-      venus, 
-      //earth, 
-      moon, 
-      mars, 
-      jupiter, 
-      saturn, 
-      uranus, 
-      neptune,
-    ];
-
     PotentialEnergy potentialEnergy1 = calculateWarpInASystem(
-      bodies: solarSystemBodies, 
+      bodies: solarSystem, 
       targetBody: earth,
     );
     PotentialEnergy potentialEnergy2 = calculateWarpInASystem(
-      bodies: solarSystemBodies, 
+      bodies: solarSystem,
       targetBody: moon,
     );
     BigDec deformationRatio1 = potentialEnergy1.calculateDeformationRatio();
@@ -105,7 +92,17 @@ void main(){
     BigDec difference = deformationRatio2.subtract(deformationRatio1);
     print("Time on the moon is x${difference.toString()} faster than the earth.");
   });
-  test("Calculate the period and direction of the orbit for each body in the solar system", (){
-
+  test("Calculate the period and direction of the orbit for each body in the solar system and the position after certain amount of time has elapsed.", (){
+    KinematicBody kinematicEarth = KinematicBody(
+      body: earth,
+      influences: solarSystem,
+    );
+    SolarYear timeInSol = SolarYear(elapsedYears: BigDec.fromString("0.5"));
+    Vector3 earthPosition = kinematicEarth.motion.getPositionAtTime(timeInSol.inSeconds());
+    //Print resulting position
+    print("Position after ${timeInSol.elapsedYears.toString()} Solar Year");
+    print("x: ${earthPosition.x.toString()}");
+    print("y: ${earthPosition.y.toString()}");
+    print("z: ${earthPosition.z.toString()}");
   });
 }
