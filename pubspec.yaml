@@ -1,6 +1,6 @@
 name: poisson_warp
 description: A library inspired by poisson's ratio to calculate the relative factor at which time ticks in different bodies in the cosmos.
-version: 0.0.2+2
+version: 0.0.3+3
 repository: https://github.com/LiveUser/poisson_warp
 
 environment:

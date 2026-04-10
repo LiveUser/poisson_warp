@@ -102,3 +102,21 @@ BigDec deformationRatio2 = potentialEnergy2.calculateDeformationRatio();
 BigDec difference = deformationRatio2.subtract(deformationRatio1);
 print("Time on the moon is x${difference.toString()} faster than the earth.");
 ~~~
+## Motion
+~~~dart
+Antikythera antikythera = Antikythera(
+  bodies: solarSystem,
+);
+SolarYear solarYear = SolarYear(years: BigDec.fromString("0.5"));
+antikythera.simulate(
+  secondsOfDisplacements: solarYear.asSeconds(),
+  steps: BigInt.from(5000),
+);
+Body? displacedEarth = antikythera.getBodyByName("Earth");
+if(displacedEarth != null){
+  print("Earth after ${solarYear.years.toString()} Solar Years");
+  print("x: ${displacedEarth.position.x.toString()}");
+  print("y: ${displacedEarth.position.y.toString()}");
+  print("z: ${displacedEarth.position.z.toString()}");
+}
+~~~
