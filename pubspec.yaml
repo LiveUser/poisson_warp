@@ -1,6 +1,6 @@
 name: poisson_warp
-description: A library inspired by poisson's ratio to calculate the relative factor at which time ticks in different bodies in the cosmos.
-version: 0.0.3+3
+description: Poisson Warp is a high‑precision gravitational‑physics and time‑deformation engine. It models how mass, geometry, and motion shape the flow of time and the evolution of bodies in space — using arbitrary‑precision mathematics.
+version: 0.0.4+4
 repository: https://github.com/LiveUser/poisson_warp
 
 environment:
@@ -9,9 +9,10 @@ environment:
 # Add regular dependencies here.
 dependencies:
   path: ^1.9.0
-  big_dec: ^0.0.9+9
+  big_dec: ^0.1.7+17
   power_plant: ^1.0.2+3
   
 dev_dependencies:
   lints: ^6.0.0
   test: ^1.25.6
+  http: ^1.6.0

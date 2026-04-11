@@ -1,5 +1,5 @@
 # Poisson Warp
-A library inspired by poisson's ratio to calculate the relative factor at which time ticks in different bodies in the cosmos. Hecho en Puerto Rico por Radamés Jomuel Valentín Reyes con la ayuda de Gemini.
+Poisson Warp is a high‑precision gravitational‑physics and time‑deformation engine. It models how mass, geometry, and motion shape the flow of time and the evolution of bodies in space — using arbitrary‑precision mathematics. Hecho en Puerto Rico por Radamés Jomuel Valentín Reyes con la ayuda de Gemini.
 ## Calculating how faster time ticks for the ISS relative to the Earth
 ~~~dart
 Body earth = Body(

@@ -37,10 +37,10 @@ packages:
     dependency: "direct main"
     description:
       name: big_dec
-      sha256: "38505be13998867d07fe0f3582c8e1b272057d919b7bb637425be2ebb9187f42"
+      sha256: "95092a89c8f2b30575530e60897ac2d315487bb50121cabb28a15855860d5f6c"
       url: "https://pub.dev"
     source: hosted
-    version: "0.0.9+9"
+    version: "0.1.7+17"
   boolean_selector:
     dependency: transitive
     description:
@@ -113,6 +113,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.1.3"
+  http:
+    dependency: "direct dev"
+    description:
+      name: http
+      sha256: "87721a4a50b19c7f1d49001e51409bddc46303966ce89a65af4f4e6004896412"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.6.0"
   http_multi_server:
     dependency: transitive
     description:
