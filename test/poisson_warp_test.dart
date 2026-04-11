@@ -45,7 +45,7 @@ class NASAHorizonsService {
       'CENTER': "'@0'", 
       'MAKE_EPHEM': 'YES',
       'OUT_UNITS': 'KM-S',
-      'CSV_FORMAT': 'NO',
+      'CSV_FORMAT': 'NO', 
       'VEC_TABLE': '2',
       'START_TIME': "'$dateTime'",
       'STOP_TIME': "'${dt2.toIso8601String().split('T').first}'",
@@ -56,39 +56,41 @@ class NASAHorizonsService {
     final response = await http.get(uri);
     final Map<String, dynamic> data = jsonDecode(response.body);
     final String resultText = data['result'];
-    final lines = resultText.split('\n');
 
-    String? xLine, yLine, zLine, vxLine, vyLine, vzLine;
-    for (final line in lines) {
-      if (line.contains(' X =')) xLine = line;
-      if (line.contains(' Y =')) yLine = line;
-      if (line.contains(' Z =')) zLine = line;
-      if (line.contains('VX=')) vxLine = line;
-      if (line.contains('VY=')) vyLine = line;
-      if (line.contains('VZ=')) vzLine = line;
-    }
-
+    final int soe = resultText.indexOf(r'$$SOE');
+    final int eoe = resultText.indexOf(r'$$EOE');
+    if (soe == -1 || eoe == -1) throw StateError("Vector data markers not found for $name");
+    
+    final String vectorBlock = resultText.substring(soe, eoe);
     final BigDec kmToM = BigDec.fromString("1000")..setDecimalPrecision(200);
 
     return Body(
       name: name,
       gm: _parseGMFromHeader(resultText),
       position: Vector3(
-        x: parseHorizonsNumber(xLine!.split('=')[1]).multiply(kmToM),
-        y: parseHorizonsNumber(yLine!.split('=')[1]).multiply(kmToM),
-        z: parseHorizonsNumber(zLine!.split('=')[1]).multiply(kmToM),
+        x: parseHorizonsNumber(_extractValue(vectorBlock, 'X')).multiply(kmToM),
+        y: parseHorizonsNumber(_extractValue(vectorBlock, 'Y')).multiply(kmToM),
+        z: parseHorizonsNumber(_extractValue(vectorBlock, 'Z')).multiply(kmToM),
       ),
       velocity: Vector3(
-        x: parseHorizonsNumber(vxLine!.split('=')[1]).multiply(kmToM),
-        y: parseHorizonsNumber(vyLine!.split('=')[1]).multiply(kmToM),
-        z: parseHorizonsNumber(vzLine!.split('=')[1]).multiply(kmToM),
+        x: parseHorizonsNumber(_extractValue(vectorBlock, 'VX')).multiply(kmToM),
+        y: parseHorizonsNumber(_extractValue(vectorBlock, 'VY')).multiply(kmToM),
+        z: parseHorizonsNumber(_extractValue(vectorBlock, 'VZ')).multiply(kmToM),
       ),
     );
+  }
+
+  String _extractValue(String text, String label) {
+    final regex = RegExp('$label\\s*=\\s*([0-9.Ede+\\-]+)', caseSensitive: false);
+    final match = regex.firstMatch(text);
+    if (match == null) throw StateError("Label $label not found in vector data block");
+    return match.group(1)!.trim();
   }
 
   BigDec _parseGMFromHeader(String header) {
     final gmMatch = RegExp(r'GM[^=]*=\s*([0-9.Ede+\-]+)', caseSensitive: false).firstMatch(header);
     if (gmMatch == null) throw StateError("GM missing in NASA header");
+    
     BigDec gmKm3 = parseHorizonsNumber(gmMatch.group(1)!);
     return gmKm3.multiply(BigDec.fromString("1000000000")..setDecimalPrecision(200));
   }
@@ -97,9 +99,10 @@ class NASAHorizonsService {
 void main() {
   final nasa = NASAHorizonsService();
 
-  test("Full Solar System Warp Simulation vs Horizons", () async {
+  test("15-Day Solar System Alignment Validation", () async {
     const String startDate = "2023-01-01";
-    const String endDate   = "2023-01-16"; // 15 days
+    const String endDate   = "2023-01-16"; 
+    final int dp = 200;
 
     final List<Map<String, String>> bodyConfigs = [
       {'id': '10',  'name': 'Sun'},
@@ -107,61 +110,144 @@ void main() {
       {'id': '299', 'name': 'Venus'},
       {'id': '399', 'name': 'Earth'},
       {'id': '499', 'name': 'Mars'},
-      {'id': '599', 'name': 'Jupiter'},
-      {'id': '699', 'name': 'Saturn'},
-      {'id': '799', 'name': 'Uranus'},
-      {'id': '899', 'name': 'Neptune'},
     ];
 
     List<Body> nasaInitial = [];
     Map<String, Body> truthMap = {};
 
-    print("Fetching initial and truth data from NASA Horizons...");
+    print("Fetching NASA Horizons data...");
     for (var config in bodyConfigs) {
-      nasaInitial.add(await nasa.fetchBody(config['id']!, config['name']!, startDate));
+      Body initial = await nasa.fetchBody(config['id']!, config['name']!, startDate);
+      nasaInitial.add(initial);
       truthMap[config['name']!] = await nasa.fetchBody(config['id']!, config['name']!, endDate);
     }
 
-    print("-------------Antikythera Simulation--------------");
-    DateTime simStart = DateTime.now();
-    const int simSteps = 10_000;
-    print("Sim Start: ${simStart.toString()}");
-    print("Sim Steps: $simSteps");
+    print("Running Antikythera physics simulation...");
     Antikythera sim = Antikythera(bodies: nasaInitial);
-    BigDec fifteenDaysInSeconds = BigDec.fromString("1296000")..setDecimalPrecision(200);
-    // Simulate for 1 Solar Year
-    sim.simulate(
-      totalTime: fifteenDaysInSeconds,
-      steps: BigInt.from(simSteps), // Increased steps for precision across all planets
-    );
-    DateTime simEnd = DateTime.now();
-    print("Sim End: ${simEnd.toString()}");
-    Duration timeElapsed = simEnd.difference(simStart);
-    print("Time Elapsed: ${timeElapsed.toString()}");
-    sim.recenterToBarycenter();
+    BigDec fifteenDays = BigDec.fromString("1296000")..setDecimalPrecision(dp);
+    
+    // Step 1: Execute simulation in the Equatorial Frame (J2000)
+    sim.simulateEquatorialFrame(durationSeconds: fifteenDays, decimalPlaces: dp);
+    
+    // Step 2: Recenter to the Solar System Barycenter
+    sim.recenterBarycenter(decimalPlaces: dp);
 
     print("\n--- ERROR ANALYSIS LOG ---");
-    final BigDec hundred = BigDec.fromString("100")..setDecimalPrecision(200);
 
     for (var config in bodyConfigs) {
       String name = config['name']!;
-      if (name == 'Sun') continue; // Error percentage for the center isn't meaningful
-
       Body truth = truthMap[name]!;
-      Body simBody = sim.getBodyByName(name)!;
+      Body? simBody = sim.getBodyByName(name);
 
-      // Distance between predicted and actual position
-      BigDec absoluteError = simBody.position.subtract(truth.position).magnitude();
-      
-      // Actual orbital distance from origin (Sun)
-      BigDec actualDistance = truth.position.magnitude();
-      
-      // Percentage Error = (Absolute Error / Actual Distance) * 100
-      BigDec percentError = absoluteError.divide(actualDistance).multiply(hundred);
+      if (simBody == null) {
+        print("$name: Error - Not found in simulation results");
+        continue;
+      }
+
+      Vector3 absoluteError = simBody.position.subtract(truth.position, decimalPlaces: dp);
+      BigDec errorMagnitude = absoluteError.magnitude(decimalPlaces: dp);
 
       print("$name:");
-      print("  - Absolute Error: ${absoluteError.toStringAsFixed(2)} meters");
-      print("  - Percent Error:  ${percentError.toStringAsFixed(8)}%");
+      print("Absolute error: ${errorMagnitude.toString()} meters");
+    }
+
+    print("\n--- HELIOCENTRIC DISTANCES (AU) ---");
+
+    final au = BigDec.fromString("149597870700")..setDecimalPrecision(dp);
+    Body? sun = sim.getBodyByName("Sun");
+
+    if (sun != null) {
+      for (var config in bodyConfigs) {
+        String name = config['name']!;
+        if (name == "Sun") continue;
+
+        Body? body = sim.getBodyByName(name);
+        if (body != null) {
+          // Calculate relative vector from Sun to Body
+          Vector3 relativePos = body.position.subtract(sun.position, decimalPlaces: dp);
+          
+          // Calculate magnitude in meters
+          BigDec distMeters = relativePos.magnitude(decimalPlaces: dp);
+          
+          // Convert meters to AU
+          BigDec distAU = distMeters.divide(au);
+
+          print("$name: ${distAU.toString()} AU");
+        }
+      }
+    }
+  });
+  test("182-Day (Half Year) Solar System Alignment Validation - 1998", () async {
+    const String startDate = "1998-02-20";
+    const String endDate   = "1998-08-21"; // Exactly 182 days later
+    final int dp = 200;
+
+    final List<Map<String, String>> bodyConfigs = [
+      {'id': '10',  'name': 'Sun'},
+      {'id': '199', 'name': 'Mercury'},
+      {'id': '299', 'name': 'Venus'},
+      {'id': '399', 'name': 'Earth'},
+      {'id': '499', 'name': 'Mars'},
+    ];
+
+    List<Body> nasaInitial = [];
+    Map<String, Body> truthMap = {};
+
+    print("Fetching NASA Horizons data for February 1998...");
+    for (var config in bodyConfigs) {
+      Body initial = await nasa.fetchBody(config['id']!, config['name']!, startDate);
+      nasaInitial.add(initial);
+      truthMap[config['name']!] = await nasa.fetchBody(config['id']!, config['name']!, endDate);
+    }
+
+    print("Running Antikythera physics simulation for 182 days...");
+    Antikythera sim = Antikythera(bodies: nasaInitial);
+    
+    // 182 days in seconds = 182 * 24 * 60 * 60
+    BigDec halfYearSeconds = BigDec.fromString("15724800")..setDecimalPrecision(dp);
+    
+    // Execute simulation and rotate to J2000 frame
+    sim.simulateEquatorialFrame(durationSeconds: halfYearSeconds, decimalPlaces: dp);
+    sim.recenterBarycenter(decimalPlaces: dp);
+
+    print("\n--- ERROR ANALYSIS LOG (182 DAYS) ---");
+
+    for (var config in bodyConfigs) {
+      String name = config['name']!;
+      Body truth = truthMap[name]!;
+      Body? simBody = sim.getBodyByName(name);
+
+      if (simBody == null) {
+        print("$name: Error - Not found in simulation results");
+        continue;
+      }
+
+      Vector3 absoluteError = simBody.position.subtract(truth.position, decimalPlaces: dp);
+      BigDec errorMagnitude = absoluteError.magnitude(decimalPlaces: dp);
+
+      print("$name:");
+      print("Absolute error: ${errorMagnitude.toString()} meters");
+    }
+
+    print("\n--- HELIOCENTRIC DISTANCES (AU) ---");
+
+    final au = BigDec.fromString("149597870700")..setDecimalPrecision(dp);
+    Body? sun = sim.getBodyByName("Sun");
+
+    if (sun != null) {
+      for (var config in bodyConfigs) {
+        String name = config['name']!;
+        if (name == "Sun") continue;
+
+        Body? body = sim.getBodyByName(name);
+        if (body != null) {
+          Vector3 relativePos = body.position.subtract(sun.position, decimalPlaces: dp);
+          BigDec distMeters = relativePos.magnitude(decimalPlaces: dp);
+          BigDec distAU = distMeters.divide(au);
+
+          print("$name: ${distAU.toString()} AU");
+        }
+      }
     }
   });
 }

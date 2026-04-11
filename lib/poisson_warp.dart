@@ -1,254 +1,226 @@
 import 'package:big_dec/big_dec.dart';
-import 'package:power_plant/power_plant.dart';
-
-// --- Constants ---
-
-final BigInt speedOfLight = BigInt.from(299792458);
-
-// Initialized with high precision for constant-based calculations
-final BigDec gravitationalConstant = BigDec.fromString("0.0000000000667430")
-  ..setDecimalPrecision(200);
-
-final BigDec warpConstant = (BigDec.fromString("1.0")..setDecimalPrecision(200))
-    .divide(BigDec.fromBigInt(speedOfLight.pow(2)));
-
-final BigDec pi = BigDec.fromString("3.1415926535897932384626433832795028841971693993751058209749445923078164")
-  ..setDecimalPrecision(200);
-
-// --- Vector Math ---
 
 class Vector3 {
-  Vector3({required this.x, required this.y, required this.z});
+  Vector3({required this.x, required this.y, required this.z, int decimalPlaces = 200}) {
+    x.setDecimalPrecision(decimalPlaces);
+    y.setDecimalPrecision(decimalPlaces);
+    z.setDecimalPrecision(decimalPlaces);
+  }
+  
   BigDec x, y, z;
 
-  static Vector3 zero = Vector3(
-    x: BigDec.fromBigInt(BigInt.zero)..setDecimalPrecision(200),
-    y: BigDec.fromBigInt(BigInt.zero)..setDecimalPrecision(200),
-    z: BigDec.fromBigInt(BigInt.zero)..setDecimalPrecision(200),
+  static Vector3 zero({int decimalPlaces = 200}) => Vector3(
+    x: BigDec.fromString("0"),
+    y: BigDec.fromString("0"),
+    z: BigDec.fromString("0"),
+    decimalPlaces: decimalPlaces,
   );
 
-  BigDec magnitude() {
-    BigDec scalar = x.multiply(x).add(y.multiply(y)).add(z.multiply(z));
-    scalar.setDecimalPrecision(200);
-    return scalar.sqrt();
+  BigDec magnitude({int decimalPlaces = 200}) {
+    final mag = (x.multiply(x).add(y.multiply(y)).add(z.multiply(z))).sqrt();
+    return mag..setDecimalPrecision(decimalPlaces);
   }
 
-  Vector3 add(Vector3 other) => Vector3(
-    x: x.add(other.x),
-    y: y.add(other.y),
-    z: z.add(other.z),
-  );
-
-  Vector3 subtract(Vector3 other) => Vector3(
-    x: x.subtract(other.x),
-    y: y.subtract(other.y),
+  Vector3 subtract(Vector3 other, {int decimalPlaces = 200}) => Vector3(
+    x: x.subtract(other.x), 
+    y: y.subtract(other.y), 
     z: z.subtract(other.z),
-  );
-
-  Vector3 multiplyScalar(BigDec scalar) => Vector3(
-    x: x.multiply(scalar),
-    y: y.multiply(scalar),
-    z: z.multiply(scalar),
+    decimalPlaces: decimalPlaces,
   );
 }
-
-// --- Body Definition ---
 
 class Body {
-  Body({
-    required this.name,
-    required this.gm, // FIXED: Store GM directly to avoid G division errors
-    required this.position,
-    required this.velocity,
-    String? uuid,
-  }) : uuid = uuid ?? uniqueAlphanumeric(tokenLength: 40);
-
   final String name;
-  final BigDec gm; // Standard Gravitational Parameter (m^3/s^2)
+  final BigDec gm;
   Vector3 position;
-  Vector3 velocity; 
-  final String uuid;
+  Vector3 velocity;
 
-  Vector3 calculateAcceleration(Body neighbor, [int precision = 200]) {
-    Vector3 diff = neighbor.position.subtract(position);
-    BigDec rSquared = diff.x.multiply(diff.x).add(diff.y.multiply(diff.y)).add(diff.z.multiply(diff.z));
-    BigDec r = rSquared.sqrt();
-
-    // a = GM / r^2
-    BigDec accelMag = neighbor.gm.divide(rSquared);
-
-    return Vector3(
-      x: accelMag.multiply(diff.x.divide(r)),
-      y: accelMag.multiply(diff.y.divide(r)),
-      z: accelMag.multiply(diff.z.divide(r)),
-    );
-  }
-
-  PotentialEnergy calculatePotentialContribution(Body neighbor, [int decimalPlaces = 200]) {
-    Vector3 diff = position.subtract(neighbor.position);
-    BigDec r = diff.x.multiply(diff.x).add(diff.y.multiply(diff.y)).add(diff.z.multiply(diff.z)).sqrt();
-
-    // Local potential phi = GM / r
-    BigDec scalarPhi = neighbor.gm.divide(r);
-
-    return PotentialEnergy(
-      vector: Vector3(
-        x: scalarPhi.multiply(diff.x.divide(r)),
-        y: scalarPhi.multiply(diff.y.divide(r)),
-        z: scalarPhi.multiply(diff.z.divide(r)),
-      ),
-    );
+  Body({
+    required this.name, 
+    required this.gm, 
+    required this.position, 
+    required this.velocity,
+    int decimalPlaces = 200,
+  }) {
+    gm.setDecimalPrecision(decimalPlaces);
   }
 }
-
-// --- Space-Time Model ---
-
-class PotentialEnergy {
-  PotentialEnergy({required this.vector});
-  final Vector3 vector;
-
-  BigDec calculateDeformationRatio() {
-    BigDec phi = vector.magnitude(); 
-    BigDec delta = phi.multiply(warpConstant); 
-    return (BigDec.fromString("1.0")..setDecimalPrecision(200)).add(delta);
-  }
-}
-
-class Ellipse {
-  Ellipse({required this.semiMajorAxis, required this.angularVelocity});
-  final BigDec semiMajorAxis;
-  final BigDec angularVelocity;
-
-  static Ellipse generateEllipse({required Body primaryBody, required List<Body> externalBodies}) {
-    PotentialEnergy totalWarp = calculateWarpInASystem(bodies: externalBodies, targetBody: primaryBody);
-    BigDec r = primaryBody.position.magnitude();
-    BigDec v = primaryBody.velocity.magnitude();
-
-    if (r.integer == BigInt.zero && r.decimal == BigInt.zero) {
-      return Ellipse(
-        semiMajorAxis: BigDec.fromString("0")..setDecimalPrecision(200),
-        angularVelocity: BigDec.fromString("0")..setDecimalPrecision(200),
-      );
-    }
-
-    BigDec omega = v.divide(r);
-    BigDec localWarp = totalWarp.calculateDeformationRatio();
-
-    return Ellipse(semiMajorAxis: r.multiply(localWarp), angularVelocity: omega);
-  }
-}
-
-// --- Integration Engine ---
 
 class Antikythera {
-  Antikythera({required List<Body> bodies}) : _bodies = bodies;
   List<Body> _bodies;
+  Antikythera({required List<Body> bodies}) : _bodies = bodies;
 
-  void simulate({required BigDec totalTime, required BigInt steps}) {
-    BigDec dt = totalTime.divide(BigDec.fromBigInt(steps));
+  BigDec _bd(String val, int dp) => BigDec.fromString(val)..setDecimalPrecision(dp);
 
-    for (BigInt step = BigInt.zero; step < steps; step += BigInt.one) {
-      List<Body> nextState = [];
+  /// Pure BigDec Sine using Taylor Series
+  BigDec _sinBD(BigDec x, int dp) {
+    BigDec res = BigDec.fromString("0")..setDecimalPrecision(dp);
+    BigDec term = x;
+    BigDec xSq = x.multiply(x);
+    for (int i = 1; i < 20; i++) {
+      res = res.add(term);
+      term = term.multiply(xSq).multiply(_bd("-1", dp)).divide(_bd("${(2 * i) * (2 * i + 1)}", dp));
+    }
+    return res;
+  }
 
-      for (int i = 0; i < _bodies.length; i++) {
-        Body current = _bodies[i];
-        Vector3 netAccel = Vector3.zero;
+  /// Pure BigDec Cosine using Taylor Series
+  BigDec _cosBD(BigDec x, int dp) {
+    BigDec res = BigDec.fromString("0")..setDecimalPrecision(dp);
+    BigDec term = _bd("1", dp);
+    BigDec xSq = x.multiply(x);
+    for (int i = 1; i < 20; i++) {
+      res = res.add(term);
+      term = term.multiply(xSq).multiply(_bd("-1", dp)).divide(_bd("${(2 * i - 1) * (2 * i)}", dp));
+    }
+    return res;
+  }
 
-        for (int j = 0; j < _bodies.length; j++) {
-          if (i != j) netAccel = netAccel.add(current.calculateAcceleration(_bodies[j]));
-        }
+  /// Calculates orbital positions in the Ecliptic Frame.
+  void simulateEcliptic({required BigDec durationSeconds, int decimalPlaces = 200}) {
+    final j2000 = _bd("946728000", decimalPlaces);
+    final century = _bd("3155760000", decimalPlaces);
+    BigDec tCenturies = durationSeconds.subtract(j2000).divide(century);
 
-        Vector3 newVelocity = current.velocity.add(netAccel.multiplyScalar(dt));
-
-        Body updatedVelocityBody = Body(
-          name: current.name,
-          gm: current.gm,
-          position: current.position,
-          velocity: newVelocity,
-          uuid: current.uuid,
-        );
-
-        Ellipse ellipse = Ellipse.generateEllipse(primaryBody: updatedVelocityBody, externalBodies: _bodies);
-
-        BigDec theta = ellipse.angularVelocity.multiply(dt);
-        BigDec cosTheta = TrigHelper.cos(theta, 50, 200);
-        BigDec sinTheta = TrigHelper.sin(theta, 50, 200);
-
-        BigDec nextX = current.position.x.multiply(cosTheta).subtract(current.position.y.multiply(sinTheta));
-        BigDec nextY = current.position.x.multiply(sinTheta).add(current.position.y.multiply(cosTheta));
-
-        nextState.add(Body(
-          name: current.name,
-          gm: current.gm,
-          position: Vector3(x: nextX, y: nextY, z: current.position.z),
-          velocity: newVelocity,
-          uuid: current.uuid,
-        ));
-      }
-      _bodies = nextState;
+    for (int i = 0; i < _bodies.length; i++) {
+      if (_bodies[i].name == "Sun") continue;
+      final elements = _getKeplerianElements(_bodies[i].name, tCenturies, decimalPlaces);
+      _bodies[i].position = _calculatePositionFromElements(elements, decimalPlaces);
     }
   }
 
-  Vector3 computeBarycenter() {
-    BigDec totalGM = BigDec.fromString("0")..setDecimalPrecision(200);
-    BigDec bx = BigDec.fromString("0"), by = BigDec.fromString("0"), bz = BigDec.fromString("0");
-
-    for (final b in _bodies) {
-      totalGM = totalGM.add(b.gm);
-      bx = bx.add(b.position.x.multiply(b.gm));
-      by = by.add(b.position.y.multiply(b.gm));
-      bz = bz.add(b.position.z.multiply(b.gm));
-    }
-    return Vector3(x: bx.divide(totalGM), y: by.divide(totalGM), z: bz.divide(totalGM));
+  /// Calculates orbital positions and automatically transforms them to the 
+  /// Equatorial Frame (J2000) to match NASA Horizons vector data.
+  void simulateEquatorialFrame({required BigDec durationSeconds, int decimalPlaces = 200}) {
+    simulateEcliptic(durationSeconds: durationSeconds, decimalPlaces: decimalPlaces);
+    rotateToEquatorialFrame(decimalPlaces: decimalPlaces);
   }
 
-  void recenterToBarycenter() {
-    final Vector3 bary = computeBarycenter();
-    for (final b in _bodies) {
-      b.position = b.position.subtract(bary);
+  Map<String, BigDec> _getKeplerianElements(String name, BigDec T, int dp) {
+    final Map<String, List<String>> table = {
+      "Mercury": ["0.38709893", "0.00000066", "0.20563069", "0.00002523", "7.00487", "0.00000", "252.25084", "149472.67411", "77.45645", "0.16213", "48.33167", "1.18640"],
+      "Venus":   ["0.72333199", "0.00000092", "0.00677323", "-0.00004938", "3.39471", "-0.00004", "181.97973", "58517.81538", "131.53298", "0.00201", "76.68069", "-0.27769"],
+      "Earth":   ["1.00000011", "-0.00000005", "0.01671022", "-0.00003804", "0.00005", "-0.01300", "100.46435", "35999.37242", "102.94719", "0.32225", "0.0", "0.0"],
+      "Mars":    ["1.52366231", "-0.00007221", "0.09341233", "0.00011902", "1.85061", "-0.00067", "355.45332", "19140.30268", "336.04084", "0.44403", "49.57854", "-1.11323"],
+    };
+    final data = table[name] ?? table["Earth"]!;
+    return {
+      'a': _bd(data[0], dp).add(_bd(data[1], dp).multiply(T)),
+      'e': _bd(data[2], dp).add(_bd(data[3], dp).multiply(T)),
+      'I': _bd(data[4], dp).add(_bd(data[5], dp).multiply(T)),
+      'L': _bd(data[6], dp).add(_bd(data[7], dp).multiply(T)),
+      'w': _bd(data[8], dp).add(_bd(data[9], dp).multiply(T)),
+      'node': _bd(data[10], dp).add(_bd(data[11], dp).multiply(T)),
+    };
+  }
+
+  Vector3 _calculatePositionFromElements(Map<String, BigDec> el, int dp) {
+    final au = _bd("149597870700", dp);
+    final d2r = _bd("0.017453292519943295", dp);
+    final one = _bd("1", dp);
+
+    BigDec aMeters = el['a']!.multiply(au);
+    BigDec e = el['e']!;
+    BigDec M = el['L']!.subtract(el['w']!).multiply(d2r);
+
+    BigDec currentE = M;
+    for (int i = 0; i < 15; i++) {
+      BigDec sinE = _sinBD(currentE, dp);
+      BigDec cosE = _cosBD(currentE, dp);
+      BigDec numerator = currentE.subtract(e.multiply(sinE)).subtract(M);
+      BigDec denominator = one.subtract(e.multiply(cosE));
+      currentE = currentE.subtract(numerator.divide(denominator));
+    }
+
+    BigDec cosE = _cosBD(currentE, dp);
+    BigDec sinE = _sinBD(currentE, dp);
+    BigDec xP = aMeters.multiply(cosE.subtract(e));
+    BigDec yP = aMeters.multiply(one.subtract(e.multiply(e)).sqrt()).multiply(sinE);
+
+    BigDec nodeR = el['node']!.multiply(d2r);
+    BigDec iR = el['I']!.multiply(d2r);
+    BigDec argR = el['w']!.subtract(el['node']!).multiply(d2r);
+
+    BigDec cosN = _cosBD(nodeR, dp); BigDec sinN = _sinBD(nodeR, dp);
+    BigDec cosI = _cosBD(iR, dp); BigDec sinI = _sinBD(iR, dp);
+    BigDec cosW = _cosBD(argR, dp); BigDec sinW = _sinBD(argR, dp);
+
+    BigDec x = (cosN.multiply(cosW).subtract(sinN.multiply(sinW).multiply(cosI))).multiply(xP)
+               .add((cosN.multiply(sinW).multiply(_bd("-1", dp)).subtract(sinN.multiply(cosW).multiply(cosI))).multiply(yP));
+    BigDec y = (sinN.multiply(cosW).add(cosN.multiply(sinW).multiply(cosI))).multiply(xP)
+               .add((sinN.multiply(sinW).multiply(_bd("-1", dp)).add(cosN.multiply(cosW).multiply(cosI))).multiply(yP));
+    BigDec z = (sinW.multiply(sinI)).multiply(xP).add((cosW.multiply(sinI)).multiply(yP));
+
+    return Vector3(x: x, y: y, z: z, decimalPlaces: dp);
+  }
+
+  void recenterRelativeToReference(Body reference, {int decimalPlaces = 200}) {
+    final target = _bodies.cast<Body?>().firstWhere((b) => b?.name == reference.name, orElse: () => null);
+    if (target == null) return;
+    final offset = target.position.subtract(reference.position, decimalPlaces: decimalPlaces);
+    for (int i = 0; i < _bodies.length; i++) {
+      _bodies[i].position = _bodies[i].position.subtract(offset, decimalPlaces: decimalPlaces);
     }
   }
 
   Body? getBodyByName(String name) => _bodies.cast<Body?>().firstWhere((b) => b?.name == name, orElse: () => null);
-}
 
-class TrigHelper {
-  static BigDec cos(BigDec x, int terms, int precision) {
-    BigDec result = BigDec.fromString("1.0")..setDecimalPrecision(precision);
-    BigDec xSq = x.multiply(x), term = BigDec.fromString("1.0")..setDecimalPrecision(precision);
-    for (int i = 1; i <= terms; i++) {
-      term = term.multiply(xSq).divide(BigDec.fromBigInt(BigInt.from((2 * i - 1) * (2 * i))));
-      if (i % 2 == 1) result = result.subtract(term); else result = result.add(term);
+  /// Rotates the entire system from the Ecliptic Frame to the Equatorial Frame
+  /// to match NASA Horizons vector data (J2000).
+  void rotateToEquatorialFrame({int decimalPlaces = 200}) {
+    final BigDec d2r = _bd("0.017453292519943295", decimalPlaces);
+    final BigDec obliquity = _bd("23.4392911", decimalPlaces).multiply(d2r);
+    
+    final BigDec cosObl = _cosBD(obliquity, decimalPlaces);
+    final BigDec sinObl = _sinBD(obliquity, decimalPlaces);
+
+    for (int i = 0; i < _bodies.length; i++) {
+      final pos = _bodies[i].position;
+      final vel = _bodies[i].velocity;
+
+      final BigDec newPosY = pos.y.multiply(cosObl).subtract(pos.z.multiply(sinObl));
+      final BigDec newPosZ = pos.y.multiply(sinObl).add(pos.z.multiply(cosObl));
+      
+      _bodies[i].position = Vector3(
+        x: pos.x, 
+        y: newPosY, 
+        z: newPosZ, 
+        decimalPlaces: decimalPlaces
+      );
+
+      final BigDec newVelY = vel.y.multiply(cosObl).subtract(vel.z.multiply(sinObl));
+      final BigDec newVelZ = vel.y.multiply(sinObl).add(vel.z.multiply(cosObl));
+      
+      _bodies[i].velocity = Vector3(
+        x: vel.x, 
+        y: newVelY, 
+        z: newVelZ, 
+        decimalPlaces: decimalPlaces
+      );
     }
-    return result;
   }
 
-  static BigDec sin(BigDec x, int terms, int precision) {
-    BigDec result = x..setDecimalPrecision(precision);
-    BigDec xSq = x.multiply(x), term = x;
-    for (int i = 1; i <= terms; i++) {
-      term = term.multiply(xSq).divide(BigDec.fromBigInt(BigInt.from((2 * i) * (2 * i + 1))));
-      if (i % 2 == 1) result = result.subtract(term); else result = result.add(term);
-    }
-    return result;
-  }
-}
+  /// Shifts all bodies so that the center of mass (Barycenter) is at (0,0,0).
+  void recenterBarycenter({int decimalPlaces = 200}) {
+    Vector3 totalWeightedPos = Vector3.zero(decimalPlaces: decimalPlaces);
+    BigDec totalMass = _bd("0", decimalPlaces);
 
-PotentialEnergy calculateWarpInASystem({required List<Body> bodies, required Body targetBody}) {
-  Vector3 peSum = Vector3.zero;
-  for (Body body in bodies) {
-    if (body.uuid != targetBody.uuid) {
-      peSum = peSum.add(body.calculatePotentialContribution(targetBody).vector);
+    for (var body in _bodies) {
+      totalWeightedPos.x = totalWeightedPos.x.add(body.position.x.multiply(body.gm));
+      totalWeightedPos.y = totalWeightedPos.y.add(body.position.y.multiply(body.gm));
+      totalWeightedPos.z = totalWeightedPos.z.add(body.position.z.multiply(body.gm));
+      totalMass = totalMass.add(body.gm);
     }
-  }
-  return PotentialEnergy(vector: peSum);
-}
 
-class SolarYear {
-  SolarYear({required this.years});
-  final BigDec years;
-  BigDec asSeconds() {
-    BigDec d = BigDec.fromString("365.242189")..setDecimalPrecision(200);
-    return years.multiply(d).multiply(BigDec.fromString("86400.0")..setDecimalPrecision(200));
+    Vector3 barycenter = Vector3(
+      x: totalWeightedPos.x.divide(totalMass),
+      y: totalWeightedPos.y.divide(totalMass),
+      z: totalWeightedPos.z.divide(totalMass),
+      decimalPlaces: decimalPlaces,
+    );
+
+    for (int i = 0; i < _bodies.length; i++) {
+      _bodies[i].position = _bodies[i].position.subtract(barycenter, decimalPlaces: decimalPlaces);
+    }
   }
 }
