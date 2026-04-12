@@ -1,104 +1,81 @@
 # Poisson Warp
-a high‑precision gravitational‑physics and time‑deformation engine developed in Puerto Rico. Built on a foundation of arbitrary‑precision mathematics using the big_dec library, it models how mass, geometry, and orbital motion shape the flow of time and the evolution of celestial bodies. The engine specializes in N-body simulations, relativistic time-dilation calculations, and frame transformations to align simulated data with high-fidelity observational sources like NASA JPL Horizons. Hecho en Puerto Rico por Radamés Jomuel Valentín Reyes con la ayuda de Gemini.
-* **Arbitrary-Precision Physics:** Utilizes `BigDec` to eliminate floating-point rounding errors in long-duration astronomical simulations.
-* **Coordinate Frame Transformation:** Includes native support for rotating system data between the **Ecliptic Frame** and the **Equatorial Frame (J2000)** to ensure compatibility with standard astronomical datasets.
-* **Heliocentric & Barycentric Support:** Features built-in methods to recenter systems relative to specific bodies (like the Sun) or the calculated center of mass (Barycenter).
-* **Relativistic Modeling:** Provides methods to calculate gravitational potential energy and the resulting time-deformation ratios across complex systems.
+Symplectic Euler high-precision N-body simulation. Software Hecho en Puerto Rico por Radamés Jomuel Valentín Reyes con la ayuda de Gemini.
 
-## Core Functions & Usage
+## Core Classes & Methods
 
-### 1. Relativistic Time Deformation
-Calculate how much faster or slower time passes on one body relative to another based on gravitational potential.
+### `Vector3`
+A high-precision 3D vector class supporting arbitrary-precision arithmetic.
+* **Methods**: `add`, `subtract`, `multiply`, and `magnitude`.
 
-```dart
-// The distance from Earth's center to the ISS
-BigInt issAltitude = BigInt.from(6791) * BigInt.from(1000);
+### `Body`
+Represents a celestial object.
+* **Properties**: `name`, `gm` (gravitational parameter), `position`, `velocity`, and `properTimeExperienced`.
 
-Body internationalSpaceStation = Body(
-  name: "ISS",
-  gm: BigDec.fromString("0"), // GM not needed for target
-  position: Vector3(
-    x: BigDec.fromBigInt(issAltitude), 
-    y: BigDec.fromBigInt(BigInt.zero), 
-    z: BigDec.fromBigInt(BigInt.zero),
-  ),
-  velocity: Vector3.zero(),
+### `Antikythera`
+The primary simulation engine.
+* **`simulateMotion`**: Implements a **Symplectic Euler** integrator (Semi-Implicit Euler). It uses a staggered update (Velocity First → Position Second) to preserve phase-space volume and ensure long-term orbital stability.
+* **`calculateBarycenter`**: A utility method to find the system's center of mass based on the current gravitational distribution.
+* **`rotateToEquatorialFrame`**: Transforms coordinate vectors to account for Earth's axial tilt (obliquity).
+
+## Usage & Implementation
+
+### High-Precision Orbital Simulation
+To maintain stability, the engine utilizes the "code flip" principle, ensuring orbits do not spiral outward over long durations. Fetched data from NASA Horizons API to test method.
+
+~~~dart
+final Antikythera sim = Antikythera(bodies: initial);
+final BigDec duration = BigDec.fromString("1209600")..setDecimalPrecision(dp); // 15 days
+
+// Execute Symplectic Integration
+sim.simulateMotion(
+  durationInSeconds: duration, 
+  steps: BigInt.from(50000), 
+  decimalPlaces: dp
 );
+//Expanded Validation Test
+//This example demonstrates fetching high-fidelity state vectors from NASA Horizons and validating the simulation against "truth" data.
 
-// Calculate deformation ratio relative to Earth's mass
-print("Time ratio on ISS: ${earth.calculatePotentialEnergy(internationalSpaceStation).calculateDeformationRatio()}");
-
-### 2. High-Precision Orbital Simulation
-Use the Antikythera class to simulate orbital positions. You can simulate in the Ecliptic frame or automatically transform to the Equatorial frame to match NASA vector data.
-~~~dart
-Antikythera sim = Antikythera(bodies: [sun, mercury, venus, earth]);
-
-// Simulate for a specific duration
-BigDec duration = BigDec.fromString("1296000"); // 15 days
-sim.simulateEquatorialFrame(durationSeconds: duration);
-
-// Re-align system to the Barycenter
-sim.recenterBarycenter();
-~~~
-### NASA Horizons Validation Test
-The following test suite demonstrates how to fetch live vector data from NASA Horizons to validate the engine's accuracy. It calculates the absolute error in meters and the heliocentric distance in Astronomical Units (AU).
-~~~dart
-import 'package:test/test.dart';
-import 'dart:convert';
-import 'package:big_dec/big_dec.dart';
-import 'package:http/http.dart' as http;
-import 'package:poisson_warp/poisson_warp.dart';
-
-void main() {
+test("Full System Alignment Validation", () async {
   final nasa = NASAHorizonsService();
+  const int dp = 200;
 
-  test("NASA Horizons Alignment Validation", () async {
-    const String startDate = "1998-02-20";
-    const String endDate   = "1998-08-21"; 
-    final int dp = 200;
+  // Example Configuration including Moons
+  final List<Map<String, String>> bodiesConfig = [
+    {"id": "10",  "name": "Sun"},
+    {"id": "199", "name": "Mercury"},
+    {"id": "399", "name": "Earth"},
+    {"id": "301", "name": "Moon"},
+    {"id": "4",   "name": "Mars Barycenter"},
+  ];
 
-    final List<Map<String, String>> bodyConfigs = [
-      {'id': '10',  'name': 'Sun'},
-      {'id': '199', 'name': 'Mercury'},
-      {'id': '299', 'name': 'Venus'},
-      {'id': '399', 'name': 'Earth'},
-      {'id': '499', 'name': 'Mars'},
-    ];
+  final DateTime t0 = DateTime(2005, 1, 1);
+  final List<Body> initial = [];
 
-    List<Body> nasaInitial = [];
-    Map<String, Body> truthMap = {};
+  for (final cfg in bodiesConfig) {
+    initial.add(await nasa.fetchBody(cfg["id"]!, cfg["name"]!, t0, t0));
+  }
 
-    for (var config in bodyConfigs) {
-      nasaInitial.add(await nasa.fetchBody(config['id']!, config['name']!, startDate));
-      truthMap[config['name']!] = await nasa.fetchBody(config['id']!, config['name']!, endDate);
-    }
+  final Antikythera sim = Antikythera(bodies: initial);
+  final BigDec duration = BigDec.fromString("1209600"); // 15 days
 
-    Antikythera sim = Antikythera(bodies: nasaInitial);
-    // 182 days in seconds
-    BigDec duration = BigDec.fromString("15724800")..setDecimalPrecision(dp); 
-    
-    sim.simulateEquatorialFrame(durationSeconds: duration, decimalPlaces: dp);
-    sim.recenterBarycenter(decimalPlaces: dp);
+  sim.simulateMotion(durationInSeconds: duration, steps: BigInt.from(100000), decimalPlaces: dp);
 
-    final au = BigDec.fromString("149597870700")..setDecimalPrecision(dp);
-    Body sun = sim.getBodyByName("Sun")!;
-
-    print("\n--- HELIOCENTRIC DISTANCES (AU) ---");
-    for (var body in sim.bodies) {
-      if (body.name == "Sun") continue;
-      Vector3 relPos = body.position.subtract(sun.position, decimalPlaces: dp);
-      print("${body.name}: ${relPos.magnitude().divide(au)} AU");
-    }
-  });
-}
+  for (var body in initial) {
+    print("${body.name} Final Position: ${body.position.x}, ${body.position.y}, ${body.position.z}");
+  }
+});
 ~~~
-### Validation Results (182-Day Simulation)
-The following results represent the heliocentric distances calculated at the end of a half-year simulation starting February 20, 1998.
+### Test results
 ~~~
---- HELIOCENTRIC DISTANCES (AU) ---
-Mercury: 0.467286371062772515 AU
-Venus:   0.712295599856126104 AU
-Earth:   0.978817326616415379 AU
-Mars:    1.399242683197065210 AU
+Mercury Distance: 0.598471688991146 AU
+Venus Distance: 0.778193847646027 AU
+Earth Distance: 1.012776034208995 AU
+Moon Distance: 1.008962515323189 AU
+Mars Distance: 1.563778329605912 AU
+Jupiter Distance: 5.455510629116387 AU
+Saturn Distance: 9.059694468740320 AU
+Uranus Distance: 20.059031731107295 AU
+Neptune Distance: 30.065865881193228 AU
 ~~~
-Hecho en Puerto Rico por Radamés Jomuel Valentín Reyes.
+## References
+- [The Code That Revolutionized Orbital Simulation by braintruffle on You Tube](https://www.youtube.com/watch?v=nCg3aXn5F3M&list=PLNExT-iB8uSMKRyKETqbaxKzI-sB9qoyO&index=3)

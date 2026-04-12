@@ -1,6 +1,6 @@
 name: poisson_warp
-description: a high‑precision gravitational‑physics and time‑deformation engine developed in Puerto Rico. Built on a foundation of arbitrary‑precision mathematics using the big_dec library, it models how mass, geometry, and orbital motion shape the flow of time and the evolution of celestial bodies. The engine specializes in N-body simulations, relativistic time-dilation calculations, and frame transformations to align simulated data with high-fidelity observational sources like NASA JPL Horizons.
-version: 0.0.4+4
+description: Symplectic Euler high-precision N-body simulation.
+version: 0.0.5+5
 repository: https://github.com/LiveUser/poisson_warp
 
 environment:

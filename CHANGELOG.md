@@ -1,3 +1,6 @@
+## 0.0.5+5
+- Symplectic Euler high-precision N-body simulation.
+
 ## 0.0.4+4
 - Data fetched from NASA Horizons API, ran a simulation, compared results and the distance of the planets from the Sun is correct.
 - Huge performance improvements
