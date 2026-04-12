@@ -169,8 +169,21 @@ void main() {
 
     final Antikythera sim = Antikythera(bodies: initial);
     final BigDec duration = BigDec.fromString("1209600")..setDecimalPrecision(dp); // 15 days
-
-    sim.simulateMotion(durationInSeconds: duration, steps: BigInt.from(50_000), dp: dp);
+    DateTime lastUpdate = DateTime.now();
+    BigInt steps = BigInt.from(50_000);
+    sim.simulateMotion(
+      durationInSeconds: duration, 
+      steps: steps, 
+      onStep: (stepsSimulated){
+        DateTime thisInstance = DateTime.now();
+        Duration timeElapsed = thisInstance.difference(lastUpdate);
+        if(1 < timeElapsed.inSeconds){
+          print("Progress: ${stepsSimulated.toString()}/${steps.toString()}");
+          lastUpdate = thisInstance;
+        }
+      },
+      dp: dp,
+    );
 
     final Body sun = sim.getBodyByName("Sun")!;
     for (var b in initial) {

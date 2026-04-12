@@ -1,3 +1,5 @@
+## 0.0.6+6
+- Added a function to track progress
 ## 0.0.5+5
 - Symplectic Euler high-precision N-body simulation.
 

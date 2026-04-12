@@ -28,7 +28,11 @@ class Antikythera {
   // --------------------------------------------------------------------------
   // CORE SYMPLECTIC EULER INTEGRATOR
   // --------------------------------------------------------------------------
-  void simulateMotion({required BigDec durationInSeconds, required BigInt steps, int dp = 200}) {
+  void simulateMotion({
+    required BigDec durationInSeconds, 
+    required Function(BigInt stepsSimulated) onStep,
+    required BigInt steps, int dp = 200,
+  }) {
     BigDec dt = durationInSeconds.divide(BigDec.fromBigInt(steps));
 
     for (BigInt i = BigInt.zero; i < steps; i += BigInt.one) {
@@ -44,6 +48,7 @@ class Antikythera {
       for (int j = 0; j < _bodies.length; j++) {
         _bodies[j].position = _bodies[j].position.add(_bodies[j].velocity.multiply(dt, dp: dp), dp: dp);
       }
+      onStep(i + BigInt.one);
     }
   }
 
