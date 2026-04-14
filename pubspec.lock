@@ -37,10 +37,10 @@ packages:
     dependency: "direct main"
     description:
       name: big_dec
-      sha256: "7f412c0b59e08761147956c27b2eabd36fc415fc4ba3bf2fb859b8b7f7346ab6"
+      sha256: c5018d515c1f517742c3cfa9057e0318def9cb129a6183e8f65bdc5ecfc4418d
       url: "https://pub.dev"
     source: hosted
-    version: "0.1.8+18"
+    version: "0.2.0+20"
   boolean_selector:
     dependency: transitive
     description:

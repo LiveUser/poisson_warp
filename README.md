@@ -1,6 +1,10 @@
 # Poisson Warp
 Symplectic Euler high-precision N-body simulation. Software Hecho en Puerto Rico por Radamés Jomuel Valentín Reyes con la ayuda de Gemini.
 
+## Status: Speculative / Under Testing
+### Important changes
+Simulation now accounts for warp. A hypothetical idea I came up with. It is not scientiffically proven.
+
 ## Core Classes & Methods
 
 ### `Vector3`
@@ -33,50 +37,61 @@ import 'package:poisson_warp/poisson_warp.dart';
 // IMPROVED SCIENTIFIC NUMBER PARSER
 // ============================================================================
 BigDec parseHorizonsNumber(String raw) {
-  // Clean string and normalize Fortran 'D' to standard 'E'
   String s = raw.trim().toUpperCase().replaceAll('D', 'E');
   if (s.isEmpty) return BigDec.fromString("0");
 
-  // Split by scientific notation marker
+  if (s.contains('+/-')) s = s.split('+/-')[0].trim();
+  if (s.contains('+-')) s = s.split('+-')[0].trim();
+
+  final expRegex = RegExp(r'([0-9.])([+-][0-9]+)');
+  s = s.replaceAllMapped(expRegex, (match) => '${match.group(1)}E${match.group(2)}');
+
   final parts = s.split('E');
   String coefficientPart = parts[0];
 
-  // Fix common shorthand: ".5" -> "0.5" or "-.5" -> "-0.5"
   if (coefficientPart.startsWith('.')) coefficientPart = '0$coefficientPart';
   if (coefficientPart.startsWith('-.')) {
     coefficientPart = coefficientPart.replaceFirst('-.', '-0.');
   }
 
-  // Create the coefficient as a high-precision BigDec
-  BigDec value = BigDec.fromString(coefficientPart)..setDecimalPrecision(200);
+  try {
+    BigDec value = BigDec.fromString(coefficientPart)..setDecimalPrecision(200);
 
-  // Handle exponent (e.g., E+06 or E-11)
-  if (parts.length > 1) {
-    int exponent = int.parse(parts[1]);
-    BigDec ten = BigDec.fromString("10")..setDecimalPrecision(200);
+    if (parts.length > 1) {
+      String rawExp = parts[1];
+      String sign = "";
 
-    if (exponent > 0) {
-      // Multiply by 10^exp
-      value = value.multiply(ten.pow(BigInt.from(exponent)));
-    } else if (exponent < 0) {
-      // Divide by 10^|exp|
-      value = value.divide(ten.pow(BigInt.from(exponent.abs())));
+      if (rawExp.startsWith('+') || rawExp.startsWith('-')) {
+        sign = rawExp[0];
+        rawExp = rawExp.substring(1);
+      }
+
+      String cleanExpNum = rawExp.split(RegExp(r'[^0-9]'))[0];
+      int exponent = int.tryParse('$sign$cleanExpNum') ?? 0;
+      BigDec ten = BigDec.fromString("10")..setDecimalPrecision(200);
+
+      if (exponent > 0) {
+        value = value.multiply(ten.pow(BigInt.from(exponent)));
+      } else if (exponent < 0) {
+        value = value.divide(ten.pow(BigInt.from(exponent.abs())));
+      }
     }
+    return value;
+  } catch (e) {
+    print("Warning: Failed to parse Horizons number: '$raw'");
+    return BigDec.fromString("0");
   }
-
-  return value;
 }
 
 // ============================================================================
 // DATE FORMATTER
 // ============================================================================
 String horizonsDate(DateTime dt) {
-  // Literal single quotes are REQUIRED by the NASA back-end for space-separated dates
   return "'${dt.year.toString().padLeft(4, '0')}-"
-         "${dt.month.toString().padLeft(2, '0')}-"
-         "${dt.day.toString().padLeft(2, '0')} "
-         "${dt.hour.toString().padLeft(2, '0')}:"
-         "${dt.minute.toString().padLeft(2, '0')}'";
+      "${dt.month.toString().padLeft(2, '0')}-"
+      "${dt.day.toString().padLeft(2, '0')} "
+      "${dt.hour.toString().padLeft(2, '0')}:"
+      "${dt.minute.toString().padLeft(2, '0')}'";
 }
 
 // ============================================================================
@@ -91,7 +106,6 @@ class NASAHorizonsService {
     DateTime start,
     DateTime end,
   ) async {
-    // Horizons needs a duration (at least 1 minute) to generate an ephemeris table
     DateTime endAdj = end.add(const Duration(minutes: 10));
 
     final Map<String, String> queryParams = {
@@ -111,7 +125,7 @@ class NASAHorizonsService {
 
     final uri = Uri.parse(_baseUrl).replace(queryParameters: queryParams);
     final response = await http.get(uri);
-    
+
     if (response.statusCode != 200) {
       throw Exception("HTTP Error: ${response.statusCode}");
     }
@@ -129,7 +143,6 @@ class NASAHorizonsService {
       throw Exception("No vector table for $name. Check API parameters.");
     }
 
-    // CSV line format: JDTDB, Calendar, X, Y, Z, VX, VY, VZ
     final String tableContent = resultText.substring(soe + soeMarker.length, eoe).trim();
     final List<String> lines = tableContent.split('\n');
     final List<String> cols = lines[0].split(',');
@@ -149,18 +162,58 @@ class NASAHorizonsService {
         y: parseHorizonsNumber(cols[6]).multiply(kmToM),
         z: parseHorizonsNumber(cols[7]).multiply(kmToM),
       ),
+      radius: _parseRadius(resultText).multiply(kmToM),
+      axialVelocityInDegreesPerSecond: _parseRotationRate(resultText),
     );
   }
 
   BigDec _parseGM(String header) {
-    // NASA often writes "GM= 1.327E+11"
     final RegExp r = RegExp(r"GM[^=]*=\s*([0-9.Ede+\-]+)", caseSensitive: false);
     final Match? m = r.firstMatch(header);
-    if (m == null) {
-      return BigDec.fromString("132712440018000000000")..setDecimalPrecision(200);
+    if (m == null) return BigDec.fromString("132712440018000000000"); 
+    return parseHorizonsNumber(m.group(1)!).multiply(BigDec.fromString("1000000000"));
+  }
+
+  BigDec _parseRadius(String header) {
+    final RegExp r = RegExp(r"radius\s*\(km\)\s*=\s*([0-9.Ede+\-]+)(?=\s|$)", caseSensitive: false);
+    final Match? m = r.firstMatch(header);
+    if (m == null) return BigDec.fromString("695700");
+    return parseHorizonsNumber(m.group(1)!);
+  }
+
+  BigDec _parseRotationRate(String header) {
+    final radRegex = RegExp(
+      r"(?:Sid\.\s*)?rot\.\s*rate,?\s*\(?rad/s\)?\s*=?\s*([0-9.Ede+\-]+)", 
+      caseSensitive: false
+    );
+    
+    final hourRegex = RegExp(
+      r"(?:Sid\.\s*)?rot\.\s*per(?:iod)?\s*=?\s*([0-9.Ede+\-]+)\s*h", 
+      caseSensitive: false
+    );
+
+    // Try Radians/sec
+    final radMatch = radRegex.firstMatch(header);
+    if (radMatch != null) {
+      final val = radMatch.group(1);
+      if (val != null) {
+        return parseHorizonsNumber(val).multiply(BigDec.fromString("57.29577951308232")).abs();
+      }
     }
-    final BigDec gmKm3 = parseHorizonsNumber(m.group(1)!);
-    return gmKm3.multiply(BigDec.fromString("1000000000")..setDecimalPrecision(200));
+
+    // Try Period in Hours
+    final hourMatch = hourRegex.firstMatch(header);
+    if (hourMatch != null) {
+      final val = hourMatch.group(1);
+      if (val != null) {
+        BigDec hours = parseHorizonsNumber(val);
+        if (hours.compareTo(BigDec.fromString("0")) == 0) return BigDec.fromString("0");
+        BigDec totalSeconds = hours.multiply(BigDec.fromString("3600"));
+        return BigDec.fromString("360").divide(totalSeconds);
+      }
+    }
+
+    return BigDec.fromString("0"); // Assume 0 if not found
   }
 }
 
@@ -170,68 +223,115 @@ class NASAHorizonsService {
 void main() {
   test("Symplectic Solar System Distance Check", () async {
     final nasa = NASAHorizonsService();
-    const int dp = 200;
-    final BigDec auMeters = BigDec.fromString("149597870700")..setDecimalPrecision(dp);
+    const int decimalPrecision = 200;
+    final BigDec auMeters = BigDec.fromString("149597870700")..setDecimalPrecision(decimalPrecision);
     
-    // Fetch start state (15-day run)
     final DateTime t0 = DateTime(2005, 1, 1);
     final List<Body> initial = [];
+    
+    // NOTE: Switched to X99 IDs to get physical rotation data headers
     final bodiesConfig = [
-      {"id": "10",  "name": "Sun",     "gm": "132712440041.93938"},
-      {"id": "199", "name": "Mercury", "gm": "22031.78"},
-      {"id": "299", "name": "Venus",   "gm": "324858.59"},
-      {"id": "399", "name": "Earth",   "gm": "398600.435"},
-      {"id": "301", "name": "Moon",    "gm": "4902.800"},
-      {"id": "4",   "name": "Mars",    "gm": "42828.375"},
-      {"id": "5",   "name": "Jupiter", "gm": "126712762.53"},
-      {"id": "6",   "name": "Saturn",  "gm": "37931184.3"},
-      {"id": "7",   "name": "Uranus",  "gm": "5793939.0"},
-      {"id": "8",   "name": "Neptune", "gm": "6836529.0"},
+      {"id": "10",  "name": "Sun"},
+      {"id": "199", "name": "Mercury"},
+      {"id": "299", "name": "Venus"},
+      {"id": "399", "name": "Earth"},
+      {"id": "301", "name": "Moon"},
+      {"id": "499", "name": "Mars"},
+      {"id": "599", "name": "Jupiter"},
+      {"id": "699", "name": "Saturn"},
+      {"id": "799", "name": "Uranus"},
+      {"id": "899", "name": "Neptune"},
     ];
+
     for (var cfg in bodiesConfig) {
       initial.add(await nasa.fetchBody(cfg["id"]!, cfg["name"]!, t0, t0));
     }
 
     final Antikythera sim = Antikythera(bodies: initial);
-    final BigDec duration = BigDec.fromString("1209600")..setDecimalPrecision(dp); // 15 days
+    BigDec simulationDays = BigDec.fromBigInt(BigInt.from(14))..setDecimalPrecision(200); 
+    BigDec daysInAYear = BigDec.fromString("365.242");
+    final BigDec duration = simulationDays.divide(daysInAYear); 
+    BigInt steps = BigInt.from(50000);
+
     DateTime lastUpdate = DateTime.now();
-    BigInt steps = BigInt.from(50_000);
+
     sim.simulateMotion(
       durationInSeconds: duration, 
       steps: steps, 
-      onStep: (stepsSimulated){
-        DateTime thisInstance = DateTime.now();
-        Duration timeElapsed = thisInstance.difference(lastUpdate);
-        if(1 < timeElapsed.inSeconds){
+      onStep: (stepsSimulated) {
+        DateTime stepCompleted = DateTime.now();
+        if(1 <= stepCompleted.difference(lastUpdate).inSeconds){
+          lastUpdate = stepCompleted;
           print("Progress: ${stepsSimulated.toString()}/${steps.toString()}");
-          lastUpdate = thisInstance;
         }
       },
-      dp: dp,
+      decimalPrecision: decimalPrecision,
     );
 
     final Body sun = sim.getBodyByName("Sun")!;
     for (var b in initial) {
       if (b.name == "Sun") continue;
-      
-      // Calculate distance relative to the Sun
-      final BigDec distAU = b.position.subtract(sun.position, dp: dp).magnitude(dp: dp).divide(auMeters);
-      print("${b.name} Distance: ${distAU.toString()} AU");
+      final BigDec distAU = b.position
+          .subtract(sun.position, decimalPrecision: decimalPrecision)
+          .magnitude(decimalPrecision: decimalPrecision)
+          .divide(auMeters);
+      print("${b.name} is at ${distAU.toString()}AU and is spinning at ${b.axialVelocityInDegreesPerSecond.toString()} deg/second");
+    }
+  });
+
+  test("Verify axial velocity calculations", () async {
+    final nasa = NASAHorizonsService();
+    final DateTime t0 = DateTime(2005, 1, 1);
+    final List<Body> initial = [];
+    
+    // Testing Centroids to ensure data-driven parsing (no cheating!)
+    final bodiesConfig = [
+      {"id": "10",  "name": "Sun"},
+      {"id": "199", "name": "Mercury"},
+      {"id": "299", "name": "Venus"},
+      {"id": "399", "name": "Earth"},
+      {"id": "301", "name": "Moon"},
+      {"id": "499", "name": "Mars"},
+      {"id": "599", "name": "Jupiter"},
+      {"id": "699", "name": "Saturn"},
+      {"id": "799", "name": "Uranus"},
+      {"id": "899", "name": "Neptune"},
+    ];
+
+    for (var cfg in bodiesConfig) {
+      initial.add(await nasa.fetchBody(cfg["id"]!, cfg["name"]!, t0, t0));
+    }
+
+    for (Body body in initial) {
+      print("- ${body.name} is spinning at ${body.axialVelocityInDegreesPerSecond.toString()} deg/second");
     }
   });
 }
 ~~~
 ### Test results
 ~~~
-Mercury Distance: 0.598471688991146 AU
-Venus Distance: 0.778193847646027 AU
-Earth Distance: 1.012776034208995 AU
-Moon Distance: 1.008962515323189 AU
-Mars Distance: 1.563778329605912 AU
-Jupiter Distance: 5.455510629116387 AU
-Saturn Distance: 9.059694468740320 AU
-Uranus Distance: 20.059031731107295 AU
-Neptune Distance: 30.065865881193228 AU
+Mercury is at 0.5984716889911468AU and is spinning at 0.00007104733955 deg/second
+
+Venus is at 0.7781938476460273AU and is spinning at 0.00001714518906 deg/second
+
+Earth is at 1.0127760342089950AU and is spinning at 0.00417807413224 deg/second
+
+Moon is at 1.0089625153231899AU and is spinning at 0.00015250417632 deg/second
+
+Mars is at 1.5637783297816529AU and is spinning at 0.00406125090260 deg/second
+
+Jupiter is at 5.4555176860831938AU and is spinning at 0.01007546282737 deg/second
+
+Saturn is at 9.0596899064041788AU and is spinning at 0.00938418924755 deg/second
+
+Uranus is at 20.0590311030866897AU and is spinning at 0.00580045283056 deg/second
+
+Neptune is at 30.0658706280278499AU and is spinning at 0.00620731016088 deg/second
 ~~~
+## Hypothesis/Theory behind the project (not scientiffically proven)
+Assumes that there is no mass at the center of mass but rather a 3d hole(sphere) pulling everything around it which bends space. Even though when you do the math eveything cancels out there is a physics example where when rotating, a person's speed changes when you extend the arms because the center of mass is moving outwards. This outward pull of the mass rips space creating a hole that pulls towards it. This is represented by the GM value of the body. The axial velocity increases centripetal force which in turn increases the warp (the hole) which in turn bends space even more. 
+
+This idea is highly speculative and needs more testing and empirical evidence but the numbers of the simulation seem correct.
+
 ## References
 - [The Code That Revolutionized Orbital Simulation by braintruffle on You Tube](https://www.youtube.com/watch?v=nCg3aXn5F3M&list=PLNExT-iB8uSMKRyKETqbaxKzI-sB9qoyO&index=3)
