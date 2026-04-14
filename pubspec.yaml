@@ -1,6 +1,6 @@
 name: poisson_warp
 description: Symplectic Euler high-precision N-body simulation.
-version: 0.0.6+6
+version: 0.0.7+7
 repository: https://github.com/LiveUser/poisson_warp
 
 environment:
