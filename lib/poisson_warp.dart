@@ -20,8 +20,14 @@ class Vector3 {
     final BigDec ysq = (y * y)..setDecimalPrecision(decimalPrecision);
     final BigDec zsq = (z * z)..setDecimalPrecision(decimalPrecision);
     final BigDec sum = (xsq + ysq + zsq)..setDecimalPrecision(decimalPrecision);
-    final BigDec mag = sum.sqrt()..setDecimalPrecision(decimalPrecision);
-    return mag;
+    return sum.sqrt()..setDecimalPrecision(decimalPrecision);
+  }
+
+  BigDec magnitudeSquared() {
+    final BigDec xsq = (x * x)..setDecimalPrecision(decimalPrecision);
+    final BigDec ysq = (y * y)..setDecimalPrecision(decimalPrecision);
+    final BigDec zsq = (z * z)..setDecimalPrecision(decimalPrecision);
+    return (xsq + ysq + zsq)..setDecimalPrecision(decimalPrecision);
   }
 
   Vector3 add(Vector3 other) => Vector3(
@@ -51,33 +57,75 @@ class Vector3 {
 
 class Body {
   final String name;
-  final BigDec gm; // GM = G * M
-  BigDec radius;
-  BigDec axialVelocityInDegreesPerSecond;
+  final BigDec gm; // G * M
   Vector3 position;
   Vector3 velocity;
+
+  /// Rotation of the body around its own axis, in degrees per second.
+  /// This is NOT orbital angular velocity.
+  BigDec axialVelocityInDegreesPerSecond;
 
   Body({
     required this.name,
     required this.gm,
     required this.position,
     required this.velocity,
-    required this.axialVelocityInDegreesPerSecond,
-    required this.radius,
-  });
+    BigDec? axialVelocityInDegreesPerSecond,
+  }) : axialVelocityInDegreesPerSecond =
+            axialVelocityInDegreesPerSecond ??
+            BigDec.fromString("0.004178074"); // ≈ Earth's axial rotation in deg/s
 }
 
 class Antikythera {
   final List<Body> _bodies;
   final int decimalPrecision;
 
+  /// Optional: central mass used for GR-like geometry (e.g. the Sun).
+  final Body? centralBody;
+
+  /// Optional: reference body for "Earth-like" tick (e.g. Earth).
+  final Body? earthReferenceBody;
+
+  /// Speed of light in m/s.
+  static final BigDec speedOfLightMetersPerSecond =
+      BigDec.fromString("299792458");
+
+  /// Dimensionless scale factor for warp radius (kept for compatibility, not used in core GR).
+  static final BigDec warpRadiusScaleFactorK_R = BigDec.fromString("10.0");
+
+  /// Dimensionless moment of inertia factor (kept for compatibility).
+  static final BigDec momentOfInertiaFactorK_I = BigDec.fromString("0.4");
+
+  /// Dimensionless tuning factor for frame-dragging (kept for compatibility).
+  static final BigDec frameDraggingFactorK_FD =
+      BigDec.fromString("0.0000001");
+
+  /// π for rad/deg conversion.
+  static final BigDec pi = BigDec.fromString("3.14159265358979323846");
+
   Antikythera({
     required List<Body> bodies,
     this.decimalPrecision = 200,
+    this.centralBody,
+    this.earthReferenceBody,
   }) : _bodies = bodies;
 
   // --------------------------------------------------------------------------
-  // CORE SYMPLECTIC EULER INTEGRATOR
+  // SYMPLECTIC EULER WITH RELATIVISTIC TICK FACTOR (WEAK-FIELD GR + SR)
+  //
+  // We keep Newtonian N-body gravity for dynamics, and use a weak-field
+  // relativistic proper-time factor for each body:
+  //
+  //   Φ(r) = -GM / r
+  //   v^2 = |v|^2
+  //   dτ/dt ≈ sqrt(1 + 2Φ/c^2 - v^2/c^2)
+  //
+  // Tick factor is normalized to an Earth-like reference body:
+  //
+  //   tick(body) = (dτ/dt)_body / (dτ/dt)_earthRef
+  //
+  // This keeps the symplectic Euler integrator but makes the tick factor
+  // physically grounded instead of ad-hoc.
   // --------------------------------------------------------------------------
   void simulateMotion({
     required BigDec durationInSeconds,
@@ -91,20 +139,28 @@ class Antikythera {
       ..setDecimalPrecision(decimalPrecision);
 
     for (BigInt i = BigInt.zero; i < steps; i = i + BigInt.one) {
-      // 1. Accelerations from current positions
+      // 1. Compute Newtonian accelerations for all bodies.
       final List<Vector3> accs =
           _bodies.map((b) => _calculateAcc(b)).toList();
 
-      // 2. Symplectic step: update velocities first
+      // 2. Compute relativistic tick factors for all bodies.
+      final List<BigDec> tickFactors =
+          _bodies.map((b) => computeTickFactorForBody(b)).toList();
+
+      // 3. Update velocities using symplectic Euler with local proper-time dt.
       for (int j = 0; j < _bodies.length; j++) {
-        final Vector3 dv = accs[j].scale(dt);
-        _bodies[j].velocity = _bodies[j].velocity.add(dv);
+        final BigDec localDt =
+            (dt * tickFactors[j])..setDecimalPrecision(decimalPrecision);
+        _bodies[j].velocity =
+            _bodies[j].velocity.add(accs[j].scale(localDt));
       }
 
-      // 3. Then update positions using new velocities
+      // 4. Update positions using updated velocities and same local proper-time dt.
       for (int j = 0; j < _bodies.length; j++) {
-        final Vector3 dp = _bodies[j].velocity.scale(dt);
-        _bodies[j].position = _bodies[j].position.add(dp);
+        final BigDec localDt =
+            (dt * tickFactors[j])..setDecimalPrecision(decimalPrecision);
+        _bodies[j].position =
+            _bodies[j].position.add(_bodies[j].velocity.scale(localDt));
       }
 
       onStep(i + BigInt.one);
@@ -112,99 +168,130 @@ class Antikythera {
   }
 
   // --------------------------------------------------------------------------
-  // WARP-BASED ACCELERATION MODEL (mass + spin deepen the "hole")
+  // PURE NEWTONIAN ACCELERATION (N-BODY)
   // --------------------------------------------------------------------------
   Vector3 _calculateAcc(Body target) {
-    // Gravitational constant (SI)
-    final BigDec G =
-        BigDec.fromString("6.67430e-11")..setDecimalPrecision(decimalPrecision);
-
-    // Tunable warp constant: how strongly spin amplifies attraction
-    final BigDec warpK =
-        BigDec.fromString("1e-30")..setDecimalPrecision(decimalPrecision);
+    final int p = decimalPrecision;
 
     Vector3 totalAcc = Vector3(
-      x: BigDec.zero..setDecimalPrecision(decimalPrecision),
-      y: BigDec.zero..setDecimalPrecision(decimalPrecision),
-      z: BigDec.zero..setDecimalPrecision(decimalPrecision),
-      decimalPrecision: decimalPrecision,
+      x: BigDec.zero..setDecimalPrecision(p),
+      y: BigDec.zero..setDecimalPrecision(p),
+      z: BigDec.zero..setDecimalPrecision(p),
+      decimalPrecision: p,
     );
 
     for (final source in _bodies) {
       if (identical(source, target)) continue;
 
-      // Vector from target to source
       final Vector3 rVec = Vector3(
         x: source.position.x - target.position.x,
         y: source.position.y - target.position.y,
         z: source.position.z - target.position.z,
-        decimalPrecision: decimalPrecision,
+        decimalPrecision: p,
       );
+
       final BigDec rMag = rVec.magnitude();
 
-      // Avoid singularity at extremely small distances
-      if (rMag
-              .compareTo(BigDec.fromString("0.0001")
-                ..setDecimalPrecision(decimalPrecision)) <=
+      // Avoid singularity / extremely close encounters.
+      if (rMag.compareTo(BigDec.fromString("0.0001")..setDecimalPrecision(p)) <=
           0) {
         continue;
       }
 
-      // --- 1. Newtonian gravity ---
-      final BigDec rSq = (rMag * rMag)..setDecimalPrecision(decimalPrecision);
-      final BigDec rCubed = (rSq * rMag)..setDecimalPrecision(decimalPrecision);
+      final BigDec rSq = (rMag * rMag)..setDecimalPrecision(p);
+      final BigDec rCubed = (rSq * rMag)..setDecimalPrecision(p);
 
-      // a_Newton = GM / r^3 * rVec
       final BigDec scalarNewton =
-          (source.gm / rCubed)..setDecimalPrecision(decimalPrecision);
+          (source.gm / rCubed)..setDecimalPrecision(p);
+
       final Vector3 newtonianAcc = rVec.scale(scalarNewton);
 
-      // --- 2. Warp: mass + axial velocity deepen the "hole" ---
-      // Mass from GM: M = GM / G
-      final BigDec mass =
-          (source.gm / G)..setDecimalPrecision(decimalPrecision);
-
-      // Angular speed in rad/s: omega = deg/s * pi/180
-      final BigDec piOver180 = BigDec.fromString("0.017453292519943295")
-        ..setDecimalPrecision(decimalPrecision);
-      final BigDec omegaRadPerSec =
-          (source.axialVelocityInDegreesPerSecond * piOver180)
-            ..setDecimalPrecision(decimalPrecision);
-
-      // |omega|
-      final BigDec absOmega = omegaRadPerSec.compareTo(BigDec.zero) < 0
-          ? ((-omegaRadPerSec)..setDecimalPrecision(decimalPrecision))
-          : omegaRadPerSec..setDecimalPrecision(decimalPrecision);
-
-      // Warp strength for this body: W_body = warpK * M * |omega|
-      final BigDec warpBody =
-          (warpK * mass * absOmega)..setDecimalPrecision(decimalPrecision);
-
-      // Distance falloff: local effect near the body
-      // f(r) = R / r
-      final BigDec falloff =
-          (source.radius / rMag)..setDecimalPrecision(decimalPrecision);
-
-      // Warp factor on attraction: F_warp = 1 + W_body * f(r)
-      final BigDec warpContribution =
-          (warpBody * falloff)..setDecimalPrecision(decimalPrecision);
-      final BigDec one = BigDec.one..setDecimalPrecision(decimalPrecision);
-      BigDec warpFactor =
-          (one + warpContribution)..setDecimalPrecision(decimalPrecision);
-
-      // Prevent negative warp factor in extreme cases
-      if (warpFactor.compareTo(BigDec.zero) < 0) {
-        warpFactor = one;
-      }
-
-      // Final acceleration from this source:
-      // a_total = F_warp * a_Newton
-      final Vector3 warpedAcc = newtonianAcc.scale(warpFactor);
-
-      totalAcc = totalAcc.add(warpedAcc);
+      totalAcc = totalAcc.add(newtonianAcc);
     }
 
     return totalAcc;
+  }
+
+  // --------------------------------------------------------------------------
+  // RELATIVISTIC TICK FACTOR (WEAK-FIELD GR + SPECIAL RELATIVITY)
+  //
+  // We approximate proper time for each body using:
+  //
+  //   Φ(r) = -GM_central / r
+  //   v^2 = |v|^2
+  //   dτ/dt ≈ sqrt(1 + 2Φ/c^2 - v^2/c^2)
+  //
+  // Then normalize to an Earth-like reference body:
+  //
+  //   tick(body) = (dτ/dt)_body / (dτ/dt)_earthRef
+  //
+  // If no earthReferenceBody is provided, we fall back to the central body
+  // as the reference.
+  // --------------------------------------------------------------------------
+  BigDec computeTickFactorForBody(Body body) {
+    final int p = decimalPrecision;
+
+    final Body central = centralBody ?? _bodies.first;
+    final Body earthRef = earthReferenceBody ?? central;
+
+    final BigDec c = speedOfLightMetersPerSecond..setDecimalPrecision(p);
+    final BigDec cSq = (c * c)..setDecimalPrecision(p);
+    final BigDec two = BigDec.fromInt(2)..setDecimalPrecision(p);
+    final BigDec one = BigDec.one..setDecimalPrecision(p);
+
+    BigDec _radiusFromCentral(Body b) {
+      final Vector3 rVec = Vector3(
+        x: b.position.x - central.position.x,
+        y: b.position.y - central.position.y,
+        z: b.position.z - central.position.z,
+        decimalPrecision: p,
+      );
+      final BigDec r = rVec.magnitude()..setDecimalPrecision(p);
+      if (r.compareTo(BigDec.zero..setDecimalPrecision(p)) <= 0) {
+        return BigDec.fromString("1.0")..setDecimalPrecision(p);
+      }
+      return r;
+    }
+
+    BigDec _vSquared(Body b) {
+      return b.velocity.magnitudeSquared()..setDecimalPrecision(p);
+    }
+
+    BigDec _properTimeFactor(Body b) {
+      final BigDec r = _radiusFromCentral(b);
+      final BigDec vSq = _vSquared(b);
+
+      // Gravitational potential Φ = -GM / r (central mass only).
+      BigDec phi = (central.gm / r)..setDecimalPrecision(p);
+      phi = (phi * BigDec.fromInt(-1)..setDecimalPrecision(p))
+        ..setDecimalPrecision(p);
+
+      // term = 1 + 2Φ/c^2 - v^2/c^2
+      BigDec term = (two * phi)..setDecimalPrecision(p);
+      term = (term / cSq)..setDecimalPrecision(p);
+
+      BigDec vTerm = (vSq / cSq)..setDecimalPrecision(p);
+
+      BigDec inside = (one + term)..setDecimalPrecision(p);
+      inside = (inside - vTerm)..setDecimalPrecision(p);
+
+      // Clamp to avoid negative due to numerical issues.
+      final BigDec almostZero =
+          BigDec.fromString("1e-30")..setDecimalPrecision(p);
+      if (inside.compareTo(almostZero) < 0) {
+        inside = almostZero;
+      }
+
+      return inside.sqrt()..setDecimalPrecision(p);
+    }
+
+    final BigDec tauDotBody = _properTimeFactor(body);
+    final BigDec tauDotEarth = _properTimeFactor(earthRef);
+
+    BigDec tick =
+        (tauDotBody / tauDotEarth)..setDecimalPrecision(p);
+
+    return tick;
   }
 
   // --------------------------------------------------------------------------
@@ -217,10 +304,11 @@ class Antikythera {
       z: BigDec.zero..setDecimalPrecision(decimalPrecision),
       decimalPrecision: decimalPrecision,
     );
+
     BigDec totalGM = BigDec.zero..setDecimalPrecision(decimalPrecision);
 
     for (final body in _bodies) {
-      final Vector3 weighted = weightedPositions.scale(body.gm);
+      final Vector3 weighted = body.position.scale(body.gm);
       weightedPositions = weightedPositions.add(weighted);
       totalGM = (totalGM + body.gm)..setDecimalPrecision(decimalPrecision);
     }
@@ -233,11 +321,12 @@ class Antikythera {
     );
   }
 
-  Body? getBodyByName(String name) =>
-      _bodies.where((b) => b.name == name).cast<Body?>().firstWhere(
-            (b) => b?.name == name,
-            orElse: () => null,
-          );
+  Body getBodyByName(String name) {
+    for (final b in _bodies) {
+      if (b.name == name) return b;
+    }
+    throw StateError("Body '$name' not found in simulation.");
+  }
 
   List<Body> get bodies => _bodies;
 }
@@ -256,8 +345,7 @@ class SolarYear {
   BigDec inSeconds() {
     final BigDec oneYearInSeconds =
         BigDec.fromString("31556925.216")..setDecimalPrecision(decimalPrecision);
-    final BigDec seconds =
-        (earthYears * oneYearInSeconds)..setDecimalPrecision(decimalPrecision);
-    return seconds;
+    return (earthYears * oneYearInSeconds)
+      ..setDecimalPrecision(decimalPrecision);
   }
 }

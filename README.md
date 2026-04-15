@@ -1,9 +1,8 @@
 # Poisson Warp
-Symplectic Euler high-precision N-body simulation. Software Hecho en Puerto Rico por Radamés Jomuel Valentín Reyes con la ayuda de Gemini.
+Symplectic Euler, high-precision, relativistic N-body simulation. Software Hecho en Puerto Rico por Radamés Jomuel Valentín Reyes con la ayuda de Copilot.
 
-## Status: Speculative / Under Testing
-### Important changes
-Simulation now accounts for warp. A hypothetical idea I came up with. It is not scientiffically proven.
+## Clarification
+This is AI Slop so don't trust it. But I'd love to have pull requests on github with serious physics. I don't care about how crazy your idea is. I just care about the results and how they match real data.
 
 ## Core Classes & Methods
 
@@ -309,6 +308,8 @@ void main() {
 }
 ~~~
 ### Test results
+
+#### Symplectic Solar System Distance Check
 ~~~
 Mercury is at 0.5984716889911468AU and is spinning at 0.00007104733955 deg/second
 
@@ -328,10 +329,16 @@ Uranus is at 20.0590311030866897AU and is spinning at 0.00580045283056 deg/secon
 
 Neptune is at 30.0658706280278499AU and is spinning at 0.00620731016088 deg/second
 ~~~
-## Hypothesis/Theory behind the project (not scientiffically proven)
-Assumes that there is no mass at the center of mass but rather a 3d hole(sphere) pulling everything around it which bends space. Even though when you do the math eveything cancels out there is a physics example where when rotating, a person's speed changes when you extend the arms because the center of mass is moving outwards. This outward pull of the mass rips space creating a hole that pulls towards it. This is represented by the GM value of the body. The axial velocity increases centripetal force which in turn increases the warp (the hole) which in turn bends space even more. 
 
-This idea is highly speculative and needs more testing and empirical evidence but the numbers of the simulation seem correct.
+#### Verify axial velocity calculations
+~~~
+
+~~~
+
+#### Warp model around a supermassive black hole
+~~~
+
+~~~
 
 ## References
 - [The Code That Revolutionized Orbital Simulation by braintruffle on You Tube](https://www.youtube.com/watch?v=nCg3aXn5F3M&list=PLNExT-iB8uSMKRyKETqbaxKzI-sB9qoyO&index=3)

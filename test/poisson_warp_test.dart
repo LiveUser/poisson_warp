@@ -5,53 +5,36 @@ import 'package:test/test.dart';
 import 'package:poisson_warp/poisson_warp.dart';
 
 // ============================================================================
-// IMPROVED SCIENTIFIC NUMBER PARSER
+// ROBUST SCIENTIFIC NUMBER PARSER FOR NASA HORIZONS
 // ============================================================================
 BigDec parseHorizonsNumber(String raw) {
-  String s = raw.trim().toUpperCase().replaceAll('D', 'E');
-  if (s.isEmpty) return BigDec.fromString("0");
-
-  if (s.contains('+/-')) s = s.split('+/-')[0].trim();
-  if (s.contains('+-')) s = s.split('+-')[0].trim();
-
-  final expRegex = RegExp(r'([0-9.])([+-][0-9]+)');
-  s = s.replaceAllMapped(expRegex, (match) => '${match.group(1)}E${match.group(2)}');
-
-  final parts = s.split('E');
-  String coefficientPart = parts[0];
-
-  if (coefficientPart.startsWith('.')) coefficientPart = '0$coefficientPart';
-  if (coefficientPart.startsWith('-.')) {
-    coefficientPart = coefficientPart.replaceFirst('-.', '-0.');
+  String s = raw.trim();
+  if (s.isEmpty) {
+    return BigDec.fromString("0")..setDecimalPrecision(200);
   }
 
-  try {
-    BigDec value = BigDec.fromString(coefficientPart)..setDecimalPrecision(200);
+  // Remove uncertainty suffixes like "+/- 1.23E-06"
+  if (s.contains('+/-')) {
+    s = s.split('+/-')[0].trim();
+  } else if (s.contains('+-')) {
+    s = s.split('+-')[0].trim();
+  }
 
-    if (parts.length > 1) {
-      String rawExp = parts[1];
-      String sign = "";
+  // Convert Fortran D exponents → E
+  s = s.replaceAll('D', 'E').replaceAll('d', 'E');
 
-      if (rawExp.startsWith('+') || rawExp.startsWith('-')) {
-        sign = rawExp[0];
-        rawExp = rawExp.substring(1);
-      }
-
-      String cleanExpNum = rawExp.split(RegExp(r'[^0-9]'))[0];
-      int exponent = int.tryParse('$sign$cleanExpNum') ?? 0;
-      BigDec ten = BigDec.fromString("10")..setDecimalPrecision(200);
-
-      if (exponent > 0) {
-        value = value.multiply(ten.pow(BigInt.from(exponent)));
-      } else if (exponent < 0) {
-        value = value.divide(ten.pow(BigInt.from(exponent.abs())));
-      }
+  // Convert Fortran-style "1.234567-06" → "1.234567E-06"
+  if (!s.contains('E') && !s.contains('e')) {
+    final match = RegExp(r'^([+-]?[0-9]*\.?[0-9]*)([+-][0-9]+)$')
+        .firstMatch(s);
+    if (match != null) {
+      final coeff = match.group(1)!.isEmpty ? "0" : match.group(1)!;
+      final exp = match.group(2)!;
+      s = '${coeff}E${exp}';
     }
-    return value;
-  } catch (e) {
-    print("Warning: Failed to parse Horizons number: '$raw'");
-    return BigDec.fromString("0");
   }
+
+  return BigDec.fromString(s)..setDecimalPrecision(200);
 }
 
 // ============================================================================
@@ -97,10 +80,6 @@ class NASAHorizonsService {
     final uri = Uri.parse(_baseUrl).replace(queryParameters: queryParams);
     final response = await http.get(uri);
 
-    if (response.statusCode != 200) {
-      throw Exception("HTTP Error: ${response.statusCode}");
-    }
-
     final Map<String, dynamic> data = jsonDecode(response.body);
     final String resultText = data["result"] ?? "";
 
@@ -110,13 +89,23 @@ class NASAHorizonsService {
     final int soe = resultText.indexOf(soeMarker);
     final int eoe = resultText.indexOf(eoeMarker);
 
-    if (soe == -1 || eoe == -1) {
-      throw Exception("No vector table for $name. Check API parameters.");
+    if (soe < 0 || eoe < 0 || eoe <= soe) {
+      throw StateError("Could not locate SOE/EOE in Horizons response.");
     }
 
-    final String tableContent = resultText.substring(soe + soeMarker.length, eoe).trim();
+    final String tableContent =
+        resultText.substring(soe + soeMarker.length, eoe).trim();
     final List<String> lines = tableContent.split('\n');
+
+    if (lines.isEmpty) {
+      throw StateError("No ephemeris lines found in Horizons response.");
+    }
+
     final List<String> cols = lines[0].split(',');
+
+    if (cols.length < 8) {
+      throw StateError("Unexpected Horizons VECTORS CSV format.");
+    }
 
     final BigDec kmToM = BigDec.fromString("1000")..setDecimalPrecision(200);
 
@@ -133,58 +122,62 @@ class NASAHorizonsService {
         y: parseHorizonsNumber(cols[6]).multiply(kmToM),
         z: parseHorizonsNumber(cols[7]).multiply(kmToM),
       ),
-      radius: _parseRadius(resultText).multiply(kmToM),
       axialVelocityInDegreesPerSecond: _parseRotationRate(resultText),
     );
   }
 
+  // GM is printed in km^3/s^2 → convert to m^3/s^2 by ×1e9
   BigDec _parseGM(String header) {
-    final RegExp r = RegExp(r"GM[^=]*=\s*([0-9.Ede+\-]+)", caseSensitive: false);
+    final RegExp r = RegExp(
+      r"GM[^=]*=\s*([0-9.Dde+\-]+)",
+      caseSensitive: false,
+    );
     final Match? m = r.firstMatch(header);
-    if (m == null) return BigDec.fromString("132712440018000000000"); 
-    return parseHorizonsNumber(m.group(1)!).multiply(BigDec.fromString("1000000000"));
-  }
-
-  BigDec _parseRadius(String header) {
-    final RegExp r = RegExp(r"radius\s*\(km\)\s*=\s*([0-9.Ede+\-]+)(?=\s|$)", caseSensitive: false);
-    final Match? m = r.firstMatch(header);
-    if (m == null) return BigDec.fromString("695700");
-    return parseHorizonsNumber(m.group(1)!);
+    if (m == null) {
+      return BigDec.fromString("132712440018000000000")
+        ..setDecimalPrecision(200);
+    }
+    final BigDec gmKm3 = parseHorizonsNumber(m.group(1)!);
+    final BigDec factor = BigDec.fromString("1000000000")
+      ..setDecimalPrecision(200);
+    return gmKm3.multiply(factor)..setDecimalPrecision(200);
   }
 
   BigDec _parseRotationRate(String header) {
     final radRegex = RegExp(
-      r"(?:Sid\.\s*)?rot\.\s*rate,?\s*\(?rad/s\)?\s*=?\s*([0-9.Ede+\-]+)", 
-      caseSensitive: false
-    );
-    
-    final hourRegex = RegExp(
-      r"(?:Sid\.\s*)?rot\.\s*per(?:iod)?\s*=?\s*([0-9.Ede+\-]+)\s*h", 
-      caseSensitive: false
+      r"(?:Sid\.\s*)?rot\.\s*rate,?\s*\(?rad/s\)?\s*=?\s*([0-9.Dde+\-]+)",
+      caseSensitive: false,
     );
 
-    // Try Radians/sec
+    final hourRegex = RegExp(
+      r"(?:Sid\.\s*)?rot\.\s*per(?:iod)?\s*=?\s*([0-9.Dde+\-]+)\s*h",
+      caseSensitive: false,
+    );
+
     final radMatch = radRegex.firstMatch(header);
     if (radMatch != null) {
-      final val = radMatch.group(1);
-      if (val != null) {
-        return parseHorizonsNumber(val).multiply(BigDec.fromString("57.29577951308232")).abs();
-      }
+      final BigDec radPerSec = parseHorizonsNumber(radMatch.group(1)!);
+      final BigDec radToDeg =
+          BigDec.fromString("57.29577951308232")..setDecimalPrecision(200);
+      return radPerSec.multiply(radToDeg).abs()..setDecimalPrecision(200);
     }
 
-    // Try Period in Hours
     final hourMatch = hourRegex.firstMatch(header);
     if (hourMatch != null) {
-      final val = hourMatch.group(1);
-      if (val != null) {
-        BigDec hours = parseHorizonsNumber(val);
-        if (hours.compareTo(BigDec.fromString("0")) == 0) return BigDec.fromString("0");
-        BigDec totalSeconds = hours.multiply(BigDec.fromString("3600"));
-        return BigDec.fromString("360").divide(totalSeconds);
+      BigDec hours = parseHorizonsNumber(hourMatch.group(1)!);
+      if (hours.compareTo(BigDec.fromString("0")) == 0) {
+        return BigDec.fromString("0")..setDecimalPrecision(200);
       }
+      final BigDec secondsPerHour =
+          BigDec.fromString("3600")..setDecimalPrecision(200);
+      final BigDec totalSeconds =
+          hours.multiply(secondsPerHour)..setDecimalPrecision(200);
+      final BigDec fullCircle =
+          BigDec.fromString("360")..setDecimalPrecision(200);
+      return fullCircle.divide(totalSeconds)..setDecimalPrecision(200);
     }
 
-    return BigDec.fromString("0"); // Assume 0 if not found
+    return BigDec.fromString("0")..setDecimalPrecision(200);
   }
 }
 
@@ -192,17 +185,21 @@ class NASAHorizonsService {
 // TEST SUITE
 // ============================================================================
 void main() {
+  // --------------------------------------------------------------------------
+  // SOLAR SYSTEM TEST
+  // --------------------------------------------------------------------------
   test("Symplectic Solar System Distance Check", () async {
     final nasa = NASAHorizonsService();
     const int decimalPrecision = 200;
-    final BigDec auMeters = BigDec.fromString("149597870700")..setDecimalPrecision(decimalPrecision);
-    
+
+    final BigDec auMeters =
+        BigDec.fromString("149597870700")..setDecimalPrecision(decimalPrecision);
+
     final DateTime t0 = DateTime(2005, 1, 1);
     final List<Body> initial = [];
-    
-    // NOTE: Switched to X99 IDs to get physical rotation data headers
+
     final bodiesConfig = [
-      {"id": "10",  "name": "Sun"},
+      {"id": "10", "name": "Sun"},
       {"id": "199", "name": "Mercury"},
       {"id": "299", "name": "Venus"},
       {"id": "399", "name": "Earth"},
@@ -218,45 +215,64 @@ void main() {
       initial.add(await nasa.fetchBody(cfg["id"]!, cfg["name"]!, t0, t0));
     }
 
-    final Antikythera sim = Antikythera(bodies: initial);
-    BigDec simulationDays = BigDec.fromBigInt(BigInt.from(14))..setDecimalPrecision(200); 
-    BigDec daysInAYear = BigDec.fromString("365.242");
-    final BigDec duration = simulationDays.divide(daysInAYear); 
-    BigInt steps = BigInt.from(50000);
+    final Antikythera sim = Antikythera(
+      bodies: initial,
+      decimalPrecision: decimalPrecision,
+      centralBody: initial.firstWhere((b) => b.name == "Sun"),
+      earthReferenceBody: initial.firstWhere((b) => b.name == "Earth"),
+    );
+
+    final BigDec simulationDays =
+        BigDec.fromString("14")..setDecimalPrecision(decimalPrecision);
+    final BigDec secondsInDay =
+        BigDec.fromString("86400")..setDecimalPrecision(decimalPrecision);
+    final BigDec durationInSeconds =
+        (simulationDays * secondsInDay)..setDecimalPrecision(decimalPrecision);
+
+    final BigInt steps = BigInt.from(25_000);
 
     DateTime lastUpdate = DateTime.now();
 
     sim.simulateMotion(
-      durationInSeconds: duration, 
-      steps: steps, 
+      durationInSeconds: durationInSeconds,
+      steps: steps,
       onStep: (stepsSimulated) {
-        DateTime stepCompleted = DateTime.now();
-        if(5 <= stepCompleted.difference(lastUpdate).inSeconds){
-          lastUpdate = stepCompleted;
-          print("Progress: ${stepsSimulated.toString()}/${steps.toString()}");
+        DateTime now = DateTime.now();
+        if (now.difference(lastUpdate).inSeconds >= 5) {
+          lastUpdate = now;
+          print("Progress: $stepsSimulated/$steps");
         }
       },
     );
 
-    final Body sun = sim.getBodyByName("Sun")!;
-    for (var b in initial) {
+    final Body sun = sim.getBodyByName("Sun");
+    for (var b in sim.bodies) {
       if (b.name == "Sun") continue;
-      final BigDec distAU = b.position
-          .subtract(sun.position)
-          .magnitude()
-          .divide(auMeters);
-      print("${b.name} is at ${distAU.toString()}AU and is spinning at ${b.axialVelocityInDegreesPerSecond.toString()} deg/second");
+      final BigDec distMeters =
+          b.position.subtract(sun.position).magnitude()
+            ..setDecimalPrecision(decimalPrecision);
+      final BigDec distAU =
+          distMeters.divide(auMeters)..setDecimalPrecision(decimalPrecision);
+      final BigDec tick =
+          sim.computeTickFactorForBody(b)..setDecimalPrecision(decimalPrecision);
+      print(
+        "${b.name} is at ${distAU.toString()} AU "
+        "and spinning at ${b.axialVelocityInDegreesPerSecond.toString()} "
+        "and time ticks x${tick.toString()} relative to the earth",
+      );
     }
   });
 
+  // --------------------------------------------------------------------------
+  // AXIAL VELOCITY TEST
+  // --------------------------------------------------------------------------
   test("Verify axial velocity calculations", () async {
     final nasa = NASAHorizonsService();
     final DateTime t0 = DateTime(2005, 1, 1);
     final List<Body> initial = [];
-    
-    // Testing Centroids to ensure data-driven parsing (no cheating!)
+
     final bodiesConfig = [
-      {"id": "10",  "name": "Sun"},
+      {"id": "10", "name": "Sun"},
       {"id": "199", "name": "Mercury"},
       {"id": "299", "name": "Venus"},
       {"id": "399", "name": "Earth"},
@@ -273,7 +289,129 @@ void main() {
     }
 
     for (Body body in initial) {
-      print("- ${body.name} is spinning at ${body.axialVelocityInDegreesPerSecond.toString()} deg/second");
+      print("- ${body.name} spin = ${body.axialVelocityInDegreesPerSecond}");
+    }
+  });
+
+  // --------------------------------------------------------------------------
+  // BLACK HOLE TEST
+  // --------------------------------------------------------------------------
+  test("Warp model around a supermassive black hole", () async {
+    const int decimalPrecision = 200;
+
+    final BigDec gmBH =
+        BigDec.fromString("5.3e26")..setDecimalPrecision(decimalPrecision);
+    final BigDec spinBH =
+        BigDec.fromString("0.05")..setDecimalPrecision(decimalPrecision);
+
+    final Body blackHole = Body(
+      name: "BH",
+      gm: gmBH,
+      position: Vector3(
+        x: BigDec.fromString("0")..setDecimalPrecision(decimalPrecision),
+        y: BigDec.fromString("0")..setDecimalPrecision(decimalPrecision),
+        z: BigDec.fromString("0")..setDecimalPrecision(decimalPrecision),
+      ),
+      velocity: Vector3(
+        x: BigDec.fromString("0")..setDecimalPrecision(decimalPrecision),
+        y: BigDec.fromString("0")..setDecimalPrecision(decimalPrecision),
+        z: BigDec.fromString("0")..setDecimalPrecision(decimalPrecision),
+      ),
+      axialVelocityInDegreesPerSecond: spinBH,
+    );
+
+    Body makeStar({
+      required String name,
+      required String rMeters,
+      required String vMetersPerSec,
+    }) {
+      final BigDec r =
+          BigDec.fromString(rMeters)..setDecimalPrecision(decimalPrecision);
+      final BigDec v =
+          BigDec.fromString(vMetersPerSec)..setDecimalPrecision(decimalPrecision);
+
+      return Body(
+        name: name,
+        gm: BigDec.fromString("0")..setDecimalPrecision(decimalPrecision),
+        position: Vector3(
+          x: r,
+          y: BigDec.fromString("0")..setDecimalPrecision(decimalPrecision),
+          z: BigDec.fromString("0")..setDecimalPrecision(decimalPrecision),
+        ),
+        velocity: Vector3(
+          x: BigDec.fromString("0")..setDecimalPrecision(decimalPrecision),
+          y: v,
+          z: BigDec.fromString("0")..setDecimalPrecision(decimalPrecision),
+        ),
+        axialVelocityInDegreesPerSecond:
+            BigDec.fromString("0.001")..setDecimalPrecision(decimalPrecision),
+      );
+    }
+
+    final Body starInner = makeStar(
+      name: "StarInner",
+      rMeters: "1.0e11",
+      vMetersPerSec: "2.0e7",
+    );
+
+    final Body starMid = makeStar(
+      name: "StarMid",
+      rMeters: "5.0e11",
+      vMetersPerSec: "1.0e7",
+    );
+
+    final Body starOuter = makeStar(
+      name: "StarOuter",
+      rMeters: "1.0e12",
+      vMetersPerSec: "7.0e6",
+    );
+
+    final List<Body> bodies = [
+      blackHole,
+      starInner,
+      starMid,
+      starOuter,
+    ];
+
+    final Antikythera sim = Antikythera(
+      bodies: bodies,
+      decimalPrecision: decimalPrecision,
+      centralBody: blackHole,
+      earthReferenceBody: starOuter,
+    );
+
+    final BigDec durationInSeconds =
+        BigDec.fromString("86400")..setDecimalPrecision(decimalPrecision);
+
+    final BigInt steps = BigInt.from(20000);
+
+    DateTime lastUpdate = DateTime.now();
+
+    sim.simulateMotion(
+      durationInSeconds: durationInSeconds,
+      steps: steps,
+      onStep: (stepsSimulated) {
+        final DateTime now = DateTime.now();
+        if (now.difference(lastUpdate).inSeconds >= 5) {
+          lastUpdate = now;
+          print("BH Progress: $stepsSimulated/$steps");
+        }
+      },
+    );
+
+    final Body bh = sim.getBodyByName("BH");
+    for (final b in sim.bodies) {
+      if (b.name == "BH") continue;
+      final BigDec dist =
+          b.position.subtract(bh.position).magnitude()
+            ..setDecimalPrecision(decimalPrecision);
+      final BigDec tick =
+          sim.computeTickFactorForBody(b)..setDecimalPrecision(decimalPrecision);
+      print(
+        "${b.name} is at ${dist.toString()} meters "
+        "and spinning at ${b.axialVelocityInDegreesPerSecond.toString()} "
+        "and time ticks x${tick.toString()} relative to the earth",
+      );
     }
   });
 }

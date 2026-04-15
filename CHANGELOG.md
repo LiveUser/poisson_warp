@@ -1,3 +1,7 @@
+## 0.0.9+9
+- Removed all of the nonsense theory and concepts I created in previous versions
+- Used copilot to rewrite the simulation engine to use relativistic formulas and the simplectic euler method.
+
 ## 0.0.8+8
 - Gemini's solution decieved me by saying that my idea was implemented when in reality it used traditional formulas.
 - Copilot claims to have fixed it to fit my idea.
