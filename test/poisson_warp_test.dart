@@ -231,20 +231,19 @@ void main() {
       steps: steps, 
       onStep: (stepsSimulated) {
         DateTime stepCompleted = DateTime.now();
-        if(1 <= stepCompleted.difference(lastUpdate).inSeconds){
+        if(5 <= stepCompleted.difference(lastUpdate).inSeconds){
           lastUpdate = stepCompleted;
           print("Progress: ${stepsSimulated.toString()}/${steps.toString()}");
         }
       },
-      decimalPrecision: decimalPrecision,
     );
 
     final Body sun = sim.getBodyByName("Sun")!;
     for (var b in initial) {
       if (b.name == "Sun") continue;
       final BigDec distAU = b.position
-          .subtract(sun.position, decimalPrecision: decimalPrecision)
-          .magnitude(decimalPrecision: decimalPrecision)
+          .subtract(sun.position)
+          .magnitude()
           .divide(auMeters);
       print("${b.name} is at ${distAU.toString()}AU and is spinning at ${b.axialVelocityInDegreesPerSecond.toString()} deg/second");
     }

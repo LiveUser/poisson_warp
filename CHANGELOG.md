@@ -1,3 +1,7 @@
+## 0.0.8+8
+- Gemini's solution decieved me by saying that my idea was implemented when in reality it used traditional formulas.
+- Copilot claims to have fixed it to fit my idea.
+
 ## 0.0.7+7
 Working version. Don't know why I pushed previous version
 
