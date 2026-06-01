@@ -1,3 +1,6 @@
+## 0.1.0+10
+- Revised and rewrote the entire code to remove AI slop
+
 ## 0.0.9+9
 - Removed all of the nonsense theory and concepts I created in previous versions
 - Used copilot to rewrite the simulation engine to use relativistic formulas and the simplectic euler method.
